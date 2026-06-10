@@ -24,18 +24,26 @@ class BiasAwareMoE(nn.Module):
 
     def __init__(self, d_model, n_heads, expert_types, top_k=2,
                  routing='learned_sparse', dropout=0.0,
-                 local_window=3, periodic_period=12):
+                 local_window=3, periodic_period=12, max_len=512, ma_kernel=25):
         super().__init__()
         self.n_experts = len(expert_types)
         self.top_k = min(top_k, self.n_experts)
         self.routing = routing
 
+        def _kwargs(et):
+            kw = {}
+            if et == 'local':
+                kw['window_size'] = local_window
+            elif et in ('periodic', 'periodic_fixed'):
+                kw['period'] = periodic_period
+            elif et == 'relative':
+                kw['max_len'] = max_len
+            elif et in ('trend', 'seasonal'):
+                kw['ma_kernel'] = ma_kernel
+            return kw
+
         self.experts = nn.ModuleList([
-            build_attention(
-                et, d_model, n_heads, dropout=dropout,
-                **(dict(window_size=local_window) if et == 'local' else {}),
-                **(dict(max_period=periodic_period) if et == 'periodic' else {}),
-            )
+            build_attention(et, d_model, n_heads, dropout=dropout, **_kwargs(et))
             for et in expert_types
         ])
 

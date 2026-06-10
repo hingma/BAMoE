@@ -82,6 +82,8 @@ class BAMoE(nn.Module):
                     dropout=args.dropout,
                     local_window=getattr(args, 'local_window', 3),
                     periodic_period=getattr(args, 'periodic_period', 12),
+                    max_len=n_patches,
+                    ma_kernel=getattr(args, 'ma_kernel', 25),
                 ),
                 d_model=args.d_model,
                 d_ff=args.d_ff,

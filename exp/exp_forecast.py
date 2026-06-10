@@ -116,6 +116,7 @@ class ExpForecast:
 
             if getattr(args, 'wandb', False):
                 wandb.log({
+                    'epoch': epoch + 1,
                     'train_loss': train_loss,
                     'val_loss': val_loss,
                     'lr': lr,

@@ -41,8 +41,12 @@ class _BaseAttention(nn.Module):
         return self.out(x.transpose(1, 2).contiguous().view(B, N, D))
 
 
+# ---------------------------------------------------------------------------
+# Expert 1: Global Context Expert
+# ---------------------------------------------------------------------------
+
 class GlobalAttention(_BaseAttention):
-    """Full (standard) self-attention — no inductive bias."""
+    """Full self-attention with no mask or positional bias (M=0, B=0)."""
 
     def forward(self, x):
         B, N, D = x.shape
@@ -51,8 +55,12 @@ class GlobalAttention(_BaseAttention):
         return self._merge(out, B, N, D)
 
 
+# ---------------------------------------------------------------------------
+# Expert 2: Causal Expert
+# ---------------------------------------------------------------------------
+
 class CausalAttention(_BaseAttention):
-    """Autoregressive masked attention — each patch attends only to earlier patches."""
+    """Autoregressive causal mask — token i attends only to j <= i."""
 
     def forward(self, x):
         B, N, D = x.shape
@@ -62,8 +70,31 @@ class CausalAttention(_BaseAttention):
         return self._merge(out, B, N, D)
 
 
+# ---------------------------------------------------------------------------
+# Expert 3: Reverse-Causal Expert
+# ---------------------------------------------------------------------------
+
+class ReverseCausalAttention(_BaseAttention):
+    """Reverse causal mask — token i attends only to j > i.
+
+    Captures mean-reversion, turning points, and trend reversals.
+    """
+
+    def forward(self, x):
+        B, N, D = x.shape
+        q, k, v = self._qkv(x)
+        # block j <= i (the diagonal and everything below it)
+        mask = torch.tril(torch.ones(N, N, device=x.device, dtype=torch.bool), diagonal=0)
+        out = self._attend(q, k, v, mask=mask)
+        return self._merge(out, B, N, D)
+
+
+# ---------------------------------------------------------------------------
+# Expert 4: Locality Expert (Window Attention)
+# ---------------------------------------------------------------------------
+
 class LocalAttention(_BaseAttention):
-    """Sliding-window attention — each patch attends within ±window_size positions."""
+    """Hard sliding-window mask — token i attends only within ±window_size."""
 
     def __init__(self, d_model, n_heads, window_size=3, dropout=0.0):
         super().__init__(d_model, n_heads, dropout)
@@ -79,38 +110,154 @@ class LocalAttention(_BaseAttention):
         return self._merge(out, B, N, D)
 
 
-class PeriodicAttention(_BaseAttention):
-    """
-    Attention with learnable periodic positional bias.
+# ---------------------------------------------------------------------------
+# Expert 5: ALiBi Locality Expert
+# ---------------------------------------------------------------------------
 
-    For each pair (i, j) the bias is indexed by |i−j| mod max_period,
-    so the model can learn to up-weight attention at periodic lag distances.
-    One bias vector per head, shared across all batch/token positions.
+class ALiBiAttention(_BaseAttention):
+    """ALiBi soft-locality bias — B_ij = -m_h * |i - j|.
+
+    Slopes m_h are fixed per-head following the ALiBi geometric schedule:
+    m_h = 2^(-8 * h / H) for h = 1, ..., H.
     """
 
-    def __init__(self, d_model, n_heads, max_period=12, dropout=0.0):
+    def __init__(self, d_model, n_heads, dropout=0.0):
         super().__init__(d_model, n_heads, dropout)
-        self.max_period = max_period
-        # (H, max_period) — one learnable scalar bias per (head, lag-mod-period)
-        self.period_bias = nn.Parameter(torch.zeros(n_heads, max_period))
+        slopes = torch.tensor(
+            [2 ** (-8.0 * h / n_heads) for h in range(1, n_heads + 1)]
+        )  # (H,)
+        self.register_buffer('slopes', slopes)
 
     def forward(self, x):
         B, N, D = x.shape
         q, k, v = self._qkv(x)
         i = torch.arange(N, device=x.device)
         j = torch.arange(N, device=x.device)
-        lag = (i.unsqueeze(1) - j.unsqueeze(0)).abs() % self.max_period  # (N, N)
-        # bias: (H, N, N)
-        bias = self.period_bias[:, lag]
-        out = self._attend(q, k, v, bias=bias.unsqueeze(0))
+        dist = (i.unsqueeze(1) - j.unsqueeze(0)).abs().float()       # (N, N)
+        bias = -self.slopes.view(-1, 1, 1) * dist.unsqueeze(0)        # (H, N, N)
+        out = self._attend(q, k, v, bias=bias.unsqueeze(0))           # (1, H, N, N)
         return self._merge(out, B, N, D)
 
 
+# ---------------------------------------------------------------------------
+# Expert 6: Fixed Periodic Expert
+# ---------------------------------------------------------------------------
+
+class FixedPeriodicAttention(_BaseAttention):
+    """Fixed periodic positional bias — B_ij = -min(d_ij, p - d_ij).
+
+    where d_ij = |i - j| mod p.  Tokens at the same phase get zero penalty;
+    tokens at opposite phases get maximum penalty.
+    """
+
+    def __init__(self, d_model, n_heads, period=12, dropout=0.0):
+        super().__init__(d_model, n_heads, dropout)
+        self.period = period
+
+    def forward(self, x):
+        B, N, D = x.shape
+        q, k, v = self._qkv(x)
+        i = torch.arange(N, device=x.device)
+        j = torch.arange(N, device=x.device)
+        d = (i.unsqueeze(1) - j.unsqueeze(0)).abs() % self.period     # (N, N) long
+        bias = -torch.min(d, self.period - d).float()                  # (N, N)
+        out = self._attend(q, k, v, bias=bias.unsqueeze(0).unsqueeze(0))
+        return self._merge(out, B, N, D)
+
+
+# ---------------------------------------------------------------------------
+# Expert 7: Learnable Relative Position Expert
+# ---------------------------------------------------------------------------
+
+class RelativePositionAttention(_BaseAttention):
+    """Learnable relative position bias — B_ij = f_theta(i - j).
+
+    Uses a per-head embedding table of size 2*max_len - 1, one scalar per
+    (head, relative-position) pair.
+    """
+
+    def __init__(self, d_model, n_heads, max_len=512, dropout=0.0):
+        super().__init__(d_model, n_heads, dropout)
+        self.max_len = max_len
+        self.rpb = nn.Embedding(2 * max_len - 1, n_heads)
+
+    def forward(self, x):
+        B, N, D = x.shape
+        q, k, v = self._qkv(x)
+        i = torch.arange(N, device=x.device)
+        j = torch.arange(N, device=x.device)
+        # relative positions in [-(N-1), N-1]; shift to valid embedding indices
+        rel = (i.unsqueeze(1) - j.unsqueeze(0)) + (self.max_len - 1)  # (N, N)
+        rel = rel.clamp(0, 2 * self.max_len - 2)
+        bias = self.rpb(rel).permute(2, 0, 1).unsqueeze(0)            # (1, H, N, N)
+        out = self._attend(q, k, v, bias=bias)
+        return self._merge(out, B, N, D)
+
+
+# ---------------------------------------------------------------------------
+# Expert 8: Trend Expert
+# ---------------------------------------------------------------------------
+
+class TrendAttention(_BaseAttention):
+    """Trend expert — QKV computed on the moving-average trend component T = MA(x)."""
+
+    def __init__(self, d_model, n_heads, ma_kernel=25, dropout=0.0):
+        super().__init__(d_model, n_heads, dropout)
+        pad = ma_kernel // 2
+        self.ma = nn.AvgPool1d(kernel_size=ma_kernel, stride=1, padding=pad)
+
+    def _trend(self, x):
+        N = x.shape[1]
+        t = self.ma(x.permute(0, 2, 1))   # (B, D, N') — padding may add 1 extra
+        return t[..., :N].permute(0, 2, 1)
+
+    def forward(self, x):
+        B, N, D = x.shape
+        q, k, v = self._qkv(self._trend(x))
+        out = self._attend(q, k, v)
+        return self._merge(out, B, N, D)
+
+
+# ---------------------------------------------------------------------------
+# Expert 9: Seasonal Expert
+# ---------------------------------------------------------------------------
+
+class SeasonalAttention(_BaseAttention):
+    """Seasonal expert — QKV computed on the de-trended component S = x - MA(x)."""
+
+    def __init__(self, d_model, n_heads, ma_kernel=25, dropout=0.0):
+        super().__init__(d_model, n_heads, dropout)
+        pad = ma_kernel // 2
+        self.ma = nn.AvgPool1d(kernel_size=ma_kernel, stride=1, padding=pad)
+
+    def _seasonal(self, x):
+        N = x.shape[1]
+        t = self.ma(x.permute(0, 2, 1))
+        trend = t[..., :N].permute(0, 2, 1)
+        return x - trend
+
+    def forward(self, x):
+        B, N, D = x.shape
+        q, k, v = self._qkv(self._seasonal(x))
+        out = self._attend(q, k, v)
+        return self._merge(out, B, N, D)
+
+
+# ---------------------------------------------------------------------------
+# Registry
+# ---------------------------------------------------------------------------
+
 ATTENTION_REGISTRY = {
-    'global': GlobalAttention,
-    'causal': CausalAttention,
-    'local': LocalAttention,
-    'periodic': PeriodicAttention,
+    'global':          GlobalAttention,
+    'causal':          CausalAttention,
+    'reverse_causal':  ReverseCausalAttention,
+    'local':           LocalAttention,
+    'alibi':           ALiBiAttention,
+    'periodic_fixed':  FixedPeriodicAttention,
+    'periodic':        FixedPeriodicAttention,   # backward-compat alias
+    'relative':        RelativePositionAttention,
+    'trend':           TrendAttention,
+    'seasonal':        SeasonalAttention,
 }
 
 

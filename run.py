@@ -33,6 +33,7 @@ import argparse
 import random
 import numpy as np
 import torch
+import wandb
 
 from exp.exp_forecast import ExpForecast
 from exp.exp_interpretability import ExpInterpretability
@@ -113,6 +114,11 @@ def get_args():
     p.add_argument('--checkpoints', type=str, default='./checkpoints/')
     p.add_argument('--results', type=str, default='./results/')
 
+    # ---- wandb ----
+    p.add_argument('--wandb', action='store_true', help='Enable Weights & Biases logging.')
+    p.add_argument('--wandb_project', type=str, default='BAMoE')
+    p.add_argument('--wandb_entity', type=str, default=None)
+
     return p.parse_args()
 
 
@@ -141,9 +147,19 @@ def main():
     args.exp_name = make_exp_name(args)
     print(f'\n=== {args.exp_name} ===')
 
+    if args.wandb:
+        wandb.init(
+            project=args.wandb_project,
+            entity=args.wandb_entity,
+            name=args.exp_name,
+            config=vars(args),
+        )
+
     if args.mode == 'interpretability':
         exp = ExpInterpretability(args)
         exp.run()
+        if args.wandb:
+            wandb.finish()
         return
 
     exp = ExpForecast(args)
@@ -151,6 +167,9 @@ def main():
         exp.train()
     if args.mode in ('test', 'train_test'):
         exp.test()
+
+    if args.wandb:
+        wandb.finish()
 
 
 if __name__ == '__main__':

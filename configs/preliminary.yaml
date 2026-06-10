@@ -1,0 +1,20 @@
+# Experiment 1: Temporal Inductive Bias Analysis (SingleBias variants)
+
+model: SingleBias
+bias_type: global  # overridden per-run in the script
+
+seq_len: 336
+d_model: 384
+n_heads: 8
+n_layers: 6
+d_ff: 512
+dropout: 0.1
+patch_len: 16
+stride: 8
+
+batch_size: 128
+learning_rate: 1.0e-4
+train_epochs: 20
+patience: 5
+weight_decay: 1.0e-4
+lradj: cosine

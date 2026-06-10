@@ -33,6 +33,7 @@ import argparse
 import random
 import numpy as np
 import torch
+import yaml
 import wandb
 
 from exp.exp_forecast import ExpForecast
@@ -41,6 +42,10 @@ from exp.exp_interpretability import ExpInterpretability
 
 def get_args():
     p = argparse.ArgumentParser('BAMoE')
+
+    # ---- config file (parsed first; sets defaults before full parse) ----
+    p.add_argument('--config', type=str, default=None,
+                   help='YAML config file. CLI args override any key set here.')
 
     # ---- experiment meta ----
     p.add_argument('--mode', type=str, default='train_test',
@@ -118,6 +123,14 @@ def get_args():
     p.add_argument('--wandb', action='store_true', help='Enable Weights & Biases logging.')
     p.add_argument('--wandb_project', type=str, default='BAMoE')
     p.add_argument('--wandb_entity', type=str, default=None)
+
+    # Two-pass: first pick up --config, inject as defaults, then re-parse so
+    # explicit CLI args always win over the YAML values.
+    pre, _ = p.parse_known_args()
+    if pre.config:
+        with open(pre.config) as f:
+            cfg = yaml.safe_load(f)
+        p.set_defaults(**cfg)
 
     return p.parse_args()
 

@@ -1,0 +1,24 @@
+# Experiment 3: Ablation Studies
+# Smaller model to keep sweep tractable; expert_types/routing/top_k overridden per-run.
+
+model: BAMoE
+expert_types: causal,local,periodic,global
+top_k: 2
+routing: learned_sparse
+load_balance_coef: 0.01
+
+seq_len: 336
+d_model: 128
+n_heads: 8
+n_layers: 3
+d_ff: 256
+dropout: 0.1
+patch_len: 16
+stride: 8
+
+batch_size: 128
+learning_rate: 1.0e-4
+train_epochs: 20
+patience: 5
+weight_decay: 1.0e-4
+lradj: cosine

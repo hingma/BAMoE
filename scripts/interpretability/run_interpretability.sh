@@ -12,14 +12,10 @@ for DATA in "${DATASETS[@]}"; do
     NAME="BAMoE_K4_learned_sparse_${DATA}_sl336_pl${PRED}"
     echo ">>> Interpretability for ${NAME}"
     python run.py \
+      --config configs/main.yaml \
       --mode interpretability \
-      --model BAMoE \
-      --expert_types causal,local,periodic,global \
-      --top_k 2 --routing learned_sparse \
-      --seq_len 336 --pred_len "${PRED}" \
-      --d_model 128 --n_heads 8 --n_layers 3 --d_ff 256 \
-      --patch_len 16 --stride 8 \
       --data "${DATA}" \
+      --pred_len "${PRED}" \
       --root_path "${ROOT}" \
       --exp_name "${NAME}"
   done

@@ -1,131 +1,247 @@
-Based on the introduction, here's a structured experiment design covering all three contributions:
+# BAMoE: Bias-Aware Mixture of Experts for Long-Term Time Series Forecasting
+
+BAMoE is a patch-based Transformer that routes each token through a mixture of heterogeneous attention experts, each encoding a different temporal inductive bias (global, causal, local, periodic). A lightweight learned router selects the top-*k* experts per token and combines their outputs with load-balanced sparse weights.
+
+## Architecture
+
+```
+Input (B, L, C)
+    │
+    ▼
+Patch Embedding  (channel-independent, shared across C)
+    │
+    ▼  ×n_layers
+┌─────────────────────────────────────┐
+│  LayerNorm → BiasAwareMoE Attention │
+│  LayerNorm → FFN (GELU)             │
+└─────────────────────────────────────┘
+    │
+    ▼
+LayerNorm → Linear head → Prediction (B, H, C)
+```
+
+**Expert types**
+
+| Type       | Mechanism                                      |
+|------------|------------------------------------------------|
+| `global`   | Standard full self-attention                   |
+| `causal`   | Causal (autoregressive) attention mask         |
+| `local`    | Sliding-window attention (configurable window) |
+| `periodic` | Period-aware attention bias                    |
+
+**Routing modes:** `learned_sparse` (default) · `top1` · `dense` · `uniform` · `random`
+
+**Auxiliary loss:** Switch-Transformer load-balancing loss weighted by `--load_balance_coef`.
 
 ---
 
-## Experiment Design for BAMoE
+## Requirements
 
-### 1. Preliminary Study: Temporal Inductive Bias Analysis
-*Supports Contribution 1 — the empirical study*
+```bash
+pip install torch numpy pandas scikit-learn matplotlib seaborn scipy tqdm wandb pyyaml
+```
 
-**Goal:** Show that different biases work better on different datasets/horizons, motivating adaptive selection.
-
-**Setup:** Train isolated single-bias Transformer variants (matching TIPS's bias-specialized teachers):
-- **Causal** — standard autoregressive attention mask
-- **Local** — sliding window / locality-aware attention
-- **Periodic** — decomposition-based or periodic positional bias
-- **Global** — full attention (no bias, baseline)
-
-**Datasets:** Use standard long-term forecasting benchmarks: ETTh1/h2, ETTm1/m2, Weather, Traffic, Electricity, Exchange-Rate. These cover varying dominant patterns (trend-heavy, seasonal, noisy).
-
-**Metrics:** MSE and MAE at prediction horizons {96, 192, 336, 720}.
-
-**Expected finding:** No single bias dominates across all datasets/horizons — this is your key motivation table.
+Python ≥ 3.10, PyTorch ≥ 2.0. CUDA is recommended; MPS (Apple Silicon) and CPU are also supported.
 
 ---
 
-### 2. Main Forecasting Results
-*Supports the core BAMoE proposal*
+## Data
 
-**Baselines to compare against:**
+Download all eight LTSF benchmark datasets (~260 MB total):
 
-| Category | Models |
-|---|---|
-| Single-bias Transformers | Informer, Autoformer, ETSformer, iTransformer |
-| Strong general baselines | PatchTST, Crossformer, TimesNet, DLinear |
-| MoE forecasting | TimeMoE, SegMoE |
-| Multi-bias distillation | TIPS (most critical baseline) |
+```bash
+bash scripts/download_data.sh ./data
+```
 
-**Evaluation:** Same 8 datasets × 4 horizons as above. Report average rank in addition to raw MSE/MAE to summarize across datasets.
-
-**Key comparisons to highlight:**
-- BAMoE vs. TIPS: demonstrates adaptive routing > static distillation
-- BAMoE vs. TimeMoE/SegMoE: demonstrates heterogeneous > homogeneous experts
-- BAMoE vs. best single-bias: demonstrates adaptive > fixed bias
+Datasets: ETTh1, ETTh2, ETTm1, ETTm2, Weather, Traffic, Electricity, Exchange Rate.
+Source: [THUML Time-Series-Library](https://huggingface.co/datasets/thuml/Time-Series-Library) on HuggingFace.
 
 ---
 
-### 3. Ablation Studies
-*Supports Contribution 3*
+## Configuration
 
-Run on a representative subset (e.g., ETTh1, Weather, Traffic) at all horizons.
+Hyperparameters live in YAML files under `configs/`. CLI flags always override YAML values.
 
-**3a. Expert diversity ablation**
+| File                       | Used for                                    |
+|----------------------------|---------------------------------------------|
+| `configs/main.yaml`        | Experiment 2 — main BAMoE results           |
+| `configs/preliminary.yaml` | Experiment 1 — single-bias study            |
+| `configs/ablation.yaml`    | Experiment 3 — ablation (smaller model)     |
+| `configs/sweep_main.yaml`  | Weights & Biases hyperparameter sweep       |
 
-Replace heterogeneous experts with homogeneous variants:
+To override a single value without editing the YAML:
 
-| Variant | Description |
-|---|---|
-| BAMoE-homo-causal | All experts use causal bias |
-| BAMoE-homo-local | All experts use local bias |
-| BAMoE-homo-periodic | All experts use periodic bias |
-| BAMoE-K1 | Single expert (no MoE) |
-| **BAMoE (full)** | Heterogeneous experts |
-
-This directly validates the claim that *expert diversity is critical*.
-
-**3b. Routing mechanism ablation**
-
-| Variant | Description |
-|---|---|
-| BAMoE-uniform | Equal routing weights (no learned routing) |
-| BAMoE-random | Random sparse routing |
-| BAMoE-top1 | Hard routing (select 1 expert) |
-| BAMoE-top2 | Top-2 sparse routing |
-| BAMoE-dense | All experts active (dense routing) |
-| **BAMoE (full)** | Learned sparse routing |
-
-**3c. Number of experts K**
-
-Sweep K ∈ {2, 3, 4, 6, 8} with heterogeneous biases. Shows the sweet spot between diversity and parameter cost.
+```bash
+python run.py --config configs/main.yaml --data ETTh1 --pred_len 96 --dropout 0.2
+```
 
 ---
 
-### 4. Interpretability Analysis
-*Supports Contribution 3 — understanding what the model learns*
+## Running Experiments
 
-**4a. Expert activation frequency**
-Plot routing weights per dataset/horizon as a heatmap. Expected: periodic-biased experts activate more on seasonal datasets (Weather); local experts activate more at short horizons.
+### Single run
 
-**4b. Routing dynamics over time**
-For a single time series, visualize which expert is selected at each input window position. Shows that routing adapts to local temporal dynamics within a sequence.
+```bash
+# Experiment 2: main BAMoE
+python run.py --config configs/main.yaml --data Weather --pred_len 336
 
-**4c. Correlation with temporal characteristics**
-Compute statistics per dataset (e.g., dominant frequency via FFT, autocorrelation at lag-1, trend strength) and correlate with which expert dominates. This quantitatively links routing behavior to temporal dynamics.
+# Experiment 1: single-bias baseline
+python run.py --config configs/preliminary.yaml --model SingleBias --bias_type causal \
+    --data ETTh1 --pred_len 96
 
-**4d. Expert attention pattern visualization**
-Visualize learned attention maps for each expert on the same input. Confirms experts maintain distinct inductive biases after training (they don't collapse).
+# Train only / test only
+python run.py --config configs/main.yaml --data ETTh1 --pred_len 96 --mode train
+python run.py --config configs/main.yaml --data ETTh1 --pred_len 96 --mode test
+
+# Resume from checkpoint (skip training if already done)
+python run.py --config configs/main.yaml --data ETTh1 --pred_len 96 --resume
+```
+
+### Full experiment sweeps
+
+```bash
+bash scripts/preliminary/run_preliminary.sh          # Exp 1: 4 biases × 8 datasets × 4 horizons
+bash scripts/main/run_main.sh                        # Exp 2: BAMoE × 8 datasets × 4 horizons
+bash scripts/ablation/run_ablation.sh                # Exp 3: diversity / routing / K ablations
+bash scripts/interpretability/run_interpretability.sh  # Exp 4: routing dynamics (needs Exp 2 checkpoints)
+```
+
+Set `DATA_ROOT` to override the data directory:
+
+```bash
+DATA_ROOT=/my/data bash scripts/main/run_main.sh
+```
+
+Results accumulate in `results/summary.csv`.
 
 ---
 
-### 5. Efficiency Analysis
+## Weights & Biases
 
-Since MoE adds parameters but uses sparse routing, report:
-- Parameter count vs. forecasting performance (Pareto plot)
-- FLOPs / inference time vs. performance
-- Comparison against TIPS and iTransformer at matched parameter budgets
+Add `--wandb` to any run to enable logging. Each run creates one W&B run with all hyperparameters logged as config and per-epoch `train_loss`, `val_loss`, `lr`, `epoch_time_s`, plus final `test_mse`, `test_mae`, `test_crps`, `test_mase`.
+
+```bash
+python run.py --config configs/main.yaml --data ETTh1 --pred_len 96 \
+    --wandb --wandb_project BAMoE --wandb_entity <your-entity>
+```
+
+### Hyperparameter search
+
+```bash
+# 1. Create the sweep (prints SWEEP_ID)
+wandb sweep configs/sweep_main.yaml
+
+# 2. Launch one or more agents
+wandb agent <entity>/BAMoE/<SWEEP_ID>
+```
+
+The sweep uses Bayesian optimisation over `learning_rate`, `dropout`, `d_model`, `d_ff`, `n_layers`, `load_balance_coef`, and `top_k`, targeting `val_loss`. Edit `configs/sweep_main.yaml` to change the search space, dataset, or horizon.
 
 ---
 
-### Suggested Dataset Priority
+## Google Colab
 
-| Priority | Datasets | Why |
-|---|---|---|
-| Primary | ETTh1, ETTh2, Weather, Traffic | Standard benchmarks, widely reported |
-| Secondary | ETTm1, ETTm2, Electricity | Fill out the table |
-| Optional | Exchange-Rate, Solar-Energy | Edge cases (noisy / strong periodicity) |
+Open `BAMoE_Colab.ipynb` for end-to-end cloud training on a free T4 GPU. The notebook mirrors the local scripts exactly — each experiment is a separate cell so you can run steps individually.
+
+**Setup** (Section 0 of the notebook):
+
+```python
+CONFIG_FILE   = "configs/main.yaml"   # which YAML to load
+CFG_OVERRIDES = dict()                # per-notebook overrides
+
+USE_WANDB     = True
+WANDB_PROJECT = "BAMoE"
+WANDB_ENTITY  = "your-username"
+```
+
+After cloning the repo, the helpers cell imports `build_args` directly from `run.py`, so the notebook and local scripts share a single argument schema.
 
 ---
 
-### Summary Table of Experiments
+## Programmatic API
 
-| # | Experiment | Contribution |
-|---|---|---|
-| 1 | Single-bias comparison across datasets | C1 (empirical study) |
-| 2 | Main results vs. all baselines | C2 (BAMoE proposal) |
-| 3a | Expert diversity ablation | C3 (diversity is critical) |
-| 3b | Routing mechanism ablation | C3 (dynamic routing matters) |
-| 3c | Number of experts sweep | C3 |
-| 4a–d | Routing interpretability | C3 (interpretability) |
-| 5 | Efficiency analysis | C2 support |
+`build_args` lets you construct a fully resolved `args` object from Python — useful for notebooks, tests, or custom training loops:
 
-The most critical experiment to get right is **Experiment 1** — it establishes the premise of the whole paper — and **3a**, which is the direct empirical proof of your core design choice.
+```python
+from run import build_args
+from exp.exp_forecast import ExpForecast
+
+args = build_args(
+    'configs/main.yaml',
+    data='ETTh1',
+    pred_len=96,
+    dropout=0.2,       # overrides the YAML value
+)
+
+exp = ExpForecast(args)
+exp.train()
+mse, mae, crps, mase = exp.test()
+```
+
+---
+
+## Project Structure
+
+```
+BAMoE/
+├── run.py                          # entry point (_make_parser, build_args, get_args)
+├── configs/
+│   ├── main.yaml                   # Exp 2 hyperparameters
+│   ├── preliminary.yaml            # Exp 1 hyperparameters
+│   ├── ablation.yaml               # Exp 3 hyperparameters
+│   └── sweep_main.yaml             # W&B sweep definition
+├── exp/
+│   ├── exp_forecast.py             # train / test loop (wandb logging)
+│   └── exp_interpretability.py     # routing visualisation
+├── models/
+│   ├── BAMoE.py                    # main model
+│   ├── SingleBias.py               # single-expert baseline
+│   └── layers/
+│       ├── attention.py            # global / causal / local / periodic attention
+│       ├── embed.py                # patch embedding
+│       └── moe.py                  # BiasAwareMoE routing layer
+├── data_provider/
+│   ├── data_factory.py
+│   └── data_loader.py
+├── utils/
+│   ├── metrics.py                  # MSE, MAE, CRPS, MASE
+│   ├── tools.py                    # EarlyStopping, LR schedule
+│   └── visualize.py
+├── scripts/
+│   ├── download_data.sh
+│   ├── main/run_main.sh
+│   ├── preliminary/run_preliminary.sh
+│   ├── ablation/run_ablation.sh
+│   └── interpretability/run_interpretability.sh
+├── BAMoE_Colab.ipynb
+├── results/summary.csv             # aggregated test metrics (auto-generated)
+└── checkpoints/                    # saved model weights (auto-generated)
+```
+
+---
+
+## Key Hyperparameters
+
+| Argument               | Default                        | Description                          |
+|------------------------|--------------------------------|--------------------------------------|
+| `--expert_types`       | `causal,local,periodic,global` | Comma-separated expert bias types    |
+| `--top_k`              | `2`                            | Active experts per token             |
+| `--routing`            | `learned_sparse`               | Router mode                          |
+| `--load_balance_coef`  | `0.01`                         | Weight for auxiliary balance loss    |
+| `--seq_len`            | `336`                          | Look-back window                     |
+| `--pred_len`           | `96`                           | Forecast horizon                     |
+| `--patch_len`          | `16`                           | Patch size for embedding             |
+| `--stride`             | `8`                            | Patch stride                         |
+| `--d_model`            | `384`*                         | Model dimension                      |
+| `--n_layers`           | `6`*                           | Transformer depth                    |
+| `--d_ff`               | `512`*                         | FFN hidden dimension                 |
+
+\* Values from `configs/main.yaml`. `configs/ablation.yaml` uses a smaller model (d_model=128, n_layers=3, d_ff=256).
+
+---
+
+## Metrics
+
+- **MSE / MAE** — standard point-forecast errors
+- **CRPS** — Continuous Ranked Probability Score (energy-score formulation); reduces to MAE for point forecasts
+- **MASE** — Mean Absolute Scaled Error, normalised by the training-set naïve forecast scale

@@ -116,12 +116,11 @@ class ExpForecast:
 
             if getattr(args, 'wandb', False):
                 wandb.log({
-                    'epoch': epoch + 1,
                     'train_loss': train_loss,
                     'val_loss': val_loss,
                     'lr': lr,
                     'epoch_time_s': elapsed,
-                })
+                }, step=epoch + 1)
 
             early_stop(val_loss, self.model, ckpt_path)
             if early_stop.early_stop:

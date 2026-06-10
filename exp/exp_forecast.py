@@ -5,7 +5,9 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.optim import Adam
+from torch.amp import autocast, GradScaler
 from tqdm import tqdm
+import wandb
 
 from data_provider.data_factory import data_provider
 from models.BAMoE import BAMoE
@@ -41,9 +43,12 @@ class ExpForecast:
 
     def _get_device(self):
         if self.args.use_gpu and torch.cuda.is_available():
+            self._amp_device_type = 'cuda'
             return torch.device(f'cuda:{self.args.gpu}')
         if self.args.use_gpu and torch.backends.mps.is_available():
+            self._amp_device_type = 'cpu'   # AMP not supported on MPS
             return torch.device('mps')
+        self._amp_device_type = 'cpu'
         return torch.device('cpu')
 
     def _build_model(self):
@@ -81,6 +86,8 @@ class ExpForecast:
         optimizer = Adam(self.model.parameters(), lr=args.learning_rate,
                          weight_decay=getattr(args, 'weight_decay', 1e-4))
         criterion = nn.MSELoss()
+        use_amp = (self._amp_device_type == 'cuda') and getattr(args, 'use_amp', True)
+        scaler  = GradScaler(self._amp_device_type, enabled=use_amp)
 
         for epoch in range(args.train_epochs):
             self.model.train()
@@ -90,18 +97,31 @@ class ExpForecast:
                               leave=False):
                 x, y = x.to(self.device), y.to(self.device)
                 optimizer.zero_grad()
-                pred, aux_loss, _ = self.model(x)
-                loss = criterion(pred, y) + aux_loss
-                loss.backward()
+                with autocast(self._amp_device_type, enabled=use_amp):
+                    pred, aux_loss, _ = self.model(x)
+                    loss = criterion(pred, y) + aux_loss
+                scaler.scale(loss).backward()
+                scaler.unscale_(optimizer)
                 nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
-                optimizer.step()
+                scaler.step(optimizer)
+                scaler.update()
                 train_losses.append(loss.item())
 
             val_loss = self._evaluate_loss(val_loader, criterion)
             lr = adjust_learning_rate(optimizer, epoch + 1, args)
             elapsed = time.time() - t0
-            print(f'Epoch {epoch + 1:3d} | train={np.mean(train_losses):.4f} '
+            train_loss = np.mean(train_losses)
+            print(f'Epoch {epoch + 1:3d} | train={train_loss:.4f} '
                   f'val={val_loss:.4f} | lr={lr:.2e} | {elapsed:.1f}s')
+
+            if getattr(args, 'wandb', False):
+                wandb.log({
+                    'epoch': epoch + 1,
+                    'train_loss': train_loss,
+                    'val_loss': val_loss,
+                    'lr': lr,
+                    'epoch_time_s': elapsed,
+                })
 
             early_stop(val_loss, self.model, ckpt_path)
             if early_stop.early_stop:
@@ -121,13 +141,15 @@ class ExpForecast:
             if os.path.exists(ckpt):
                 self.model.load_state_dict(torch.load(ckpt, map_location=self.device))
 
+        use_amp = (self._amp_device_type == 'cuda') and getattr(self.args, 'use_amp', True)
         _, test_loader = data_provider(self.args, 'test')
         preds, trues = [], []
         self.model.eval()
         with torch.no_grad():
             for x, y in test_loader:
                 x = x.to(self.device)
-                pred, _, _ = self.model(x)
+                with autocast(self._amp_device_type, enabled=use_amp):
+                    pred, _, _ = self.model(x)
                 preds.append(pred.cpu().numpy())
                 trues.append(y.numpy())
 
@@ -137,6 +159,15 @@ class ExpForecast:
         mse_val, mae_val, crps_val, mase_val = metric(preds, trues, naive_scale=scale)
         print(f'Test  | MSE={mse_val:.4f}  MAE={mae_val:.4f}  '
               f'CRPS={crps_val:.4f}  MASE={mase_val:.4f}')
+
+        if getattr(self.args, 'wandb', False):
+            wandb.log({
+                'test_mse': mse_val,
+                'test_mae': mae_val,
+                'test_crps': crps_val,
+                'test_mase': mase_val,
+            })
+
         self._save_results(mse_val, mae_val, crps_val, mase_val)
         return mse_val, mae_val, crps_val, mase_val
 
@@ -145,12 +176,14 @@ class ExpForecast:
     # ------------------------------------------------------------------
 
     def _evaluate_loss(self, loader, criterion):
+        use_amp = (self._amp_device_type == 'cuda') and getattr(self.args, 'use_amp', True)
         self.model.eval()
         losses = []
         with torch.no_grad():
             for x, y in loader:
                 x, y = x.to(self.device), y.to(self.device)
-                pred, aux_loss, _ = self.model(x)
+                with autocast(self._amp_device_type, enabled=use_amp):
+                    pred, aux_loss, _ = self.model(x)
                 losses.append((criterion(pred, y) + aux_loss).item())
         self.model.train()
         return np.mean(losses)

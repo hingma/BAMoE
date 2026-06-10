@@ -10,8 +10,8 @@ DATASETS=(ETTh1 ETTh2 ETTm1 ETTm2 Weather Traffic Electricity Exchange)
 COMMON="--model BAMoE
         --expert_types causal,local,periodic,global
         --top_k 2 --routing learned_sparse
-        --seq_len 336 --d_model 128 --n_heads 8
-        --n_layers 3 --d_ff 256 --dropout 0.1
+        --seq_len 336 --d_model 384 --n_heads 8
+        --n_layers 6 --d_ff 512 --dropout 0.1
         --patch_len 16 --stride 8
         --load_balance_coef 0.01
         --batch_size 128 --learning_rate 1e-4 --train_epochs 20

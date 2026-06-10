@@ -9,8 +9,8 @@ PREDS=(96 192 336 720)
 DATASETS=(ETTh1 ETTh2 ETTm1 ETTm2 Weather Traffic Electricity Exchange)
 BIAS_TYPES=(global causal local periodic)
 
-COMMON="--model SingleBias --seq_len 336 --d_model 128 --n_heads 8
-        --n_layers 3 --d_ff 256 --dropout 0.1 --patch_len 16 --stride 8
+COMMON="--model SingleBias --seq_len 336 --d_model 384 --n_heads 8
+        --n_layers 6 --d_ff 512 --dropout 0.1 --patch_len 16 --stride 8
         --batch_size 128 --learning_rate 1e-4 --train_epochs 20
         --patience 5 --resume --root_path ${ROOT}"
 

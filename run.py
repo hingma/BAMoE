@@ -40,10 +40,10 @@ from exp.exp_forecast import ExpForecast
 from exp.exp_interpretability import ExpInterpretability
 
 
-def get_args():
+def _make_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser('BAMoE')
 
-    # ---- config file (parsed first; sets defaults before full parse) ----
+    # ---- config file ----
     p.add_argument('--config', type=str, default=None,
                    help='YAML config file. CLI args override any key set here.')
 
@@ -124,23 +124,7 @@ def get_args():
     p.add_argument('--wandb_project', type=str, default='BAMoE')
     p.add_argument('--wandb_entity', type=str, default=None)
 
-    # Two-pass: first pick up --config, inject as defaults, then re-parse so
-    # explicit CLI args always win over the YAML values.
-    pre, _ = p.parse_known_args()
-    if pre.config:
-        with open(pre.config) as f:
-            cfg = yaml.safe_load(f)
-        p.set_defaults(**cfg)
-
-    return p.parse_args()
-
-
-def set_seed(seed):
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
+    return p
 
 
 def make_exp_name(args):
@@ -152,6 +136,44 @@ def make_exp_name(args):
         n_exp = len(args.expert_types.split(','))
         tag = f'BAMoE_K{n_exp}_{args.routing}'
     return f'{tag}_{args.data}_sl{args.seq_len}_pl{args.pred_len}'
+
+
+def build_args(config: str = None, **overrides) -> argparse.Namespace:
+    """Programmatic entry point for notebooks and tests.
+
+    Equivalent to: python run.py --config <config> [--key value ...]
+    but callable from Python without touching sys.argv.
+
+    Example:
+        args = build_args('configs/main.yaml', data='ETTh1', pred_len=96)
+    """
+    p = _make_parser()
+    if config:
+        with open(config) as f:
+            p.set_defaults(**yaml.safe_load(f))
+    args = p.parse_args([])
+    for k, v in overrides.items():
+        setattr(args, k, v)
+    args.exp_name = make_exp_name(args)
+    return args
+
+
+def get_args() -> argparse.Namespace:
+    """CLI entry point — two-pass so explicit flags always beat the YAML."""
+    p = _make_parser()
+    pre, _ = p.parse_known_args()
+    if pre.config:
+        with open(pre.config) as f:
+            p.set_defaults(**yaml.safe_load(f))
+    return p.parse_args()
+
+
+def set_seed(seed):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
 
 
 def main():

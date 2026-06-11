@@ -9,7 +9,7 @@ DATASETS=(ETTh1 ETTh2 ETTm1 ETTm2 Weather Traffic Electricity Exchange)
 
 for DATA in "${DATASETS[@]}"; do
   for PRED in "${PREDS[@]}"; do
-    NAME="BAMoE_K4_learned_sparse_${DATA}_sl336_pl${PRED}"
+    NAME="BAMoE_K9_learned_sparse_${DATA}_sl336_pl${PRED}"
     echo ">>> ${NAME}"
     python run.py \
       --config configs/main.yaml \

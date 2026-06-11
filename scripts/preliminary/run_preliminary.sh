@@ -6,7 +6,7 @@ set -e
 ROOT=${DATA_ROOT:-"./data"}
 PREDS=(96 192 336 720)
 DATASETS=(ETTh1 ETTh2 ETTm1 ETTm2 Weather Traffic Electricity Exchange)
-BIAS_TYPES=(global causal local periodic)
+BIAS_TYPES=(global causal reverse_causal local alibi periodic_fixed relative trend seasonal)
 
 for BIAS in "${BIAS_TYPES[@]}"; do
   for DATA in "${DATASETS[@]}"; do

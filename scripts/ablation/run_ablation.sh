@@ -10,12 +10,17 @@ DATASETS=(ETTh1 Weather Traffic)
 # ---------- 3a: Expert diversity ablation ----------
 echo "=== 3a: Expert diversity ==="
 declare -A HOMO_EXPERTS
-HOMO_EXPERTS[homo_causal]="causal,causal,causal,causal"
-HOMO_EXPERTS[homo_local]="local,local,local,local"
-HOMO_EXPERTS[homo_periodic]="periodic,periodic,periodic,periodic"
-HOMO_EXPERTS[homo_global]="global,global,global,global"
+HOMO_EXPERTS[homo_causal]="causal,causal,causal,causal,causal,causal,causal,causal,causal"
+HOMO_EXPERTS[homo_local]="local,local,local,local,local,local,local,local,local"
+HOMO_EXPERTS[homo_periodic]="periodic_fixed,periodic_fixed,periodic_fixed,periodic_fixed,periodic_fixed,periodic_fixed,periodic_fixed,periodic_fixed,periodic_fixed"
+HOMO_EXPERTS[homo_global]="global,global,global,global,global,global,global,global,global"
+HOMO_EXPERTS[homo_reverse_causal]="reverse_causal,reverse_causal,reverse_causal,reverse_causal,reverse_causal,reverse_causal,reverse_causal,reverse_causal,reverse_causal"
+HOMO_EXPERTS[homo_alibi]="alibi,alibi,alibi,alibi,alibi,alibi,alibi,alibi,alibi"
+HOMO_EXPERTS[homo_relative]="relative,relative,relative,relative,relative,relative,relative,relative,relative"
+HOMO_EXPERTS[homo_trend]="trend,trend,trend,trend,trend,trend,trend,trend,trend"
+HOMO_EXPERTS[homo_seasonal]="seasonal,seasonal,seasonal,seasonal,seasonal,seasonal,seasonal,seasonal,seasonal"
 HOMO_EXPERTS[K1]="causal"
-HOMO_EXPERTS[hetero]="causal,local,periodic,global"
+HOMO_EXPERTS[hetero]="causal,reverse_causal,local,alibi,periodic_fixed,relative,trend,seasonal,global"
 
 for TAG in "${!HOMO_EXPERTS[@]}"; do
   for DATA in "${DATASETS[@]}"; do
@@ -60,10 +65,11 @@ done
 echo "=== 3c: Number of experts K ==="
 declare -A K_EXPERTS
 K_EXPERTS[K2]="causal,global"
-K_EXPERTS[K3]="causal,local,periodic"
-K_EXPERTS[K4]="causal,local,periodic,global"
-K_EXPERTS[K6]="causal,local,periodic,global,causal,local"
-K_EXPERTS[K8]="causal,local,periodic,global,causal,local,periodic,global"
+K_EXPERTS[K3]="causal,local,periodic_fixed"
+K_EXPERTS[K4]="causal,local,periodic_fixed,global"
+K_EXPERTS[K6]="causal,reverse_causal,local,alibi,periodic_fixed,global"
+K_EXPERTS[K8]="causal,reverse_causal,local,alibi,periodic_fixed,relative,trend,seasonal"
+K_EXPERTS[K9]="causal,reverse_causal,local,alibi,periodic_fixed,relative,trend,seasonal,global"
 
 for TAG in "${!K_EXPERTS[@]}"; do
   for DATA in "${DATASETS[@]}"; do

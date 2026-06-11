@@ -9,7 +9,7 @@ DATASETS=(ETTh1 ETTh2 Weather Traffic)
 
 for DATA in "${DATASETS[@]}"; do
   for PRED in "${PREDS[@]}"; do
-    NAME="BAMoE_K4_learned_sparse_${DATA}_sl336_pl${PRED}"
+    NAME="BAMoE_K9_learned_sparse_${DATA}_sl336_pl${PRED}"
     echo ">>> Interpretability for ${NAME}"
     python run.py \
       --config configs/main.yaml \

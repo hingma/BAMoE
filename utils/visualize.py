@@ -47,7 +47,12 @@ def plot_routing_dynamics(routing_seq, expert_labels, save_path, title=''):
     fig, ax = plt.subplots(figsize=(max(8, n_patches * 0.15), 3))
     x = np.arange(n_patches)
     bottom = np.zeros(n_patches)
-    colors = plt.cm.tab10(np.linspace(0, 0.8, n_experts))
+    if n_experts <= 10:
+        colors = plt.cm.tab10(np.linspace(0, 1, 10, endpoint=False))[:n_experts]
+    elif n_experts <= 20:
+        colors = plt.cm.tab20(np.linspace(0, 1, 20, endpoint=False))[:n_experts]
+    else:
+        colors = plt.cm.hsv(np.linspace(0, 1, n_experts, endpoint=False))
     for e, (label, color) in enumerate(zip(expert_labels, colors)):
         ax.bar(x, routing_seq[:, e], bottom=bottom, label=label, color=color, width=1.0)
         bottom += routing_seq[:, e]

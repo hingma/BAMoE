@@ -2,7 +2,6 @@
 # Smaller model to keep sweep tractable; expert_types/routing/top_k overridden per-run.
 
 model: BAMoE
-expert_types: causal,local,periodic,global
 top_k: 2
 routing: learned_sparse
 load_balance_coef: 0.01

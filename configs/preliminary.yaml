@@ -12,7 +12,7 @@ dropout: 0.1
 patch_len: 16
 stride: 8
 
-batch_size: 128
+batch_size: 32  # default; run_preliminary.sh overrides per dataset
 learning_rate: 1.0e-4
 train_epochs: 20
 patience: 5

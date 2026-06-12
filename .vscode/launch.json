@@ -1,0 +1,129 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "BAMoE: train+test (ETTh1, pl96)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/run.py",
+            "args": [
+                "--model", "BAMoE",
+                "--data", "ETTh1",
+                "--seq_len", "336",
+                "--pred_len", "96",
+                "--routing", "learned_sparse",
+                "--train_epochs", "2",
+                "--batch_size", "32",
+                "--num_workers", "0"
+            ],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "justMyCode": false
+        },
+        {
+            "name": "BAMoE: train+test (Weather, pl336)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/run.py",
+            "args": [
+                "--model", "BAMoE",
+                "--expert_types", "causal,local,periodic,global",
+                "--data", "Weather",
+                "--seq_len", "336",
+                "--pred_len", "336",
+                "--routing", "learned_sparse",
+                "--train_epochs", "2",
+                "--batch_size", "32",
+                "--num_workers", "0"
+            ],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "justMyCode": false
+        },
+        {
+            "name": "SingleBias: causal (ETTh1, pl96)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/run.py",
+            "args": [
+                "--model", "SingleBias",
+                "--bias_type", "causal",
+                "--data", "ETTh1",
+                "--seq_len", "336",
+                "--pred_len", "96",
+                "--train_epochs", "2",
+                "--batch_size", "32",
+                "--num_workers", "0"
+            ],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "justMyCode": false
+        },
+        {
+            "name": "Ablation: uniform routing (ETTh1, pl96)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/run.py",
+            "args": [
+                "--model", "BAMoE",
+                "--routing", "uniform",
+                "--data", "ETTh1",
+                "--seq_len", "336",
+                "--pred_len", "96",
+                "--train_epochs", "2",
+                "--batch_size", "32",
+                "--num_workers", "0"
+            ],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "justMyCode": false
+        },
+        {
+            "name": "Ablation: homogeneous experts (ETTh1, pl96)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/run.py",
+            "args": [
+                "--model", "BAMoE",
+                "--expert_types", "causal,causal,causal,causal",
+                "--data", "ETTh1",
+                "--seq_len", "336",
+                "--pred_len", "96",
+                "--exp_name", "ablation_homo_causal_ETTh1_96",
+                "--train_epochs", "2",
+                "--batch_size", "32",
+                "--num_workers", "0"
+            ],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "justMyCode": false
+        },
+        {
+            "name": "Interpretability (ETTh1, pl96)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/run.py",
+            "args": [
+                "--model", "BAMoE",
+                "--mode", "interpretability",
+                "--data", "ETTh1",
+                "--seq_len", "336",
+                "--pred_len", "96",
+                "--num_workers", "0"
+            ],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "justMyCode": false
+        },
+        {
+            "name": "run.py: current file args (prompt)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/run.py",
+            "args": [],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "justMyCode": false
+        }
+    ]
+}

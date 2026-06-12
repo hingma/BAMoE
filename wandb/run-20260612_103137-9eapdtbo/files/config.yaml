@@ -1,0 +1,154 @@
+_wandb:
+    value:
+        cli_version: 0.27.2
+        e:
+            k1wvrb1snenerqgu6sw92o5gu0ocnsnv:
+                args:
+                    - --config
+                    - configs/main.yaml
+                    - --data
+                    - ETTh1
+                    - --pred_len
+                    - "96"
+                    - --exp_name
+                    - BAMoE_K9_learned_sparse_ETTh1_sl336_pl96
+                    - --root_path
+                    - ./data
+                    - --batch_size
+                    - "128"
+                    - --resume
+                    - --wandb
+                    - --wandb_project
+                    - BAMoE_main
+                codePath: run.py
+                codePathLocal: run.py
+                cpu_count: 104
+                cpu_count_logical: 208
+                cudaVersion: "13.0"
+                disk:
+                    /:
+                        total: "32212254720"
+                        used: "3883274240"
+                email: tangmoxin831@gmail.com
+                executable: /root/miniconda3/bin/python
+                git:
+                    commit: 3d8664c7675e9e6261233a6923f20dae0e61b9fb
+                    remote: https://github.com/hingma/BAMoE.git
+                gpu: NVIDIA RTX PRO 6000 Blackwell Server Edition
+                gpu_count: 1
+                gpu_nvidia:
+                    - architecture: Blackwell
+                      cudaCores: 24064
+                      memoryTotal: "102641958912"
+                      name: NVIDIA RTX PRO 6000 Blackwell Server Edition
+                      uuid: GPU-17de7383-7f92-f312-6407-e6389c2e974e
+                host: autodl-container-07a443923d-c7a55ec6
+                memory:
+                    total: "1081795903488"
+                os: Linux-5.15.0-78-generic-x86_64-with-glibc2.35
+                program: /root/BAMoE/run.py
+                python: CPython 3.12.3
+                root: /root/BAMoE
+                startedAt: "2026-06-12T02:31:37.998485Z"
+                writerId: k1wvrb1snenerqgu6sw92o5gu0ocnsnv
+        m: []
+        python_version: 3.12.3
+        t:
+            "1":
+                - 1
+                - 5
+                - 53
+            "2":
+                - 1
+                - 5
+                - 53
+            "3":
+                - 13
+                - 16
+                - 61
+            "4": 3.12.3
+            "5": 0.27.2
+            "12": 0.27.2
+            "13": linux-x86_64
+batch_size:
+    value: 128
+bias_type:
+    value: global
+checkpoints:
+    value: ./checkpoints/
+config:
+    value: configs/main.yaml
+d_ff:
+    value: 128
+d_model:
+    value: 64
+data:
+    value: ETTh1
+data_path:
+    value: ""
+dropout:
+    value: 0.1
+exp_name:
+    value: BAMoE_K9_learned_sparse_ETTh1_sl336_pl96
+expert_types:
+    value: causal,local,periodic,global
+features:
+    value: M
+gpu:
+    value: 0
+learning_rate:
+    value: 0.0001
+load_balance_coef:
+    value: 0.01
+local_window:
+    value: 3
+lradj:
+    value: cosine
+mode:
+    value: train_test
+model:
+    value: BAMoE
+n_heads:
+    value: 8
+n_layers:
+    value: 6
+num_workers:
+    value: 0
+patch_len:
+    value: 16
+patience:
+    value: 10000
+periodic_period:
+    value: 12
+pred_len:
+    value: 96
+results:
+    value: ./results/
+resume:
+    value: true
+root_path:
+    value: ./data
+routing:
+    value: learned_sparse
+seed:
+    value: 2024
+seq_len:
+    value: 336
+stride:
+    value: 8
+target:
+    value: OT
+top_k:
+    value: 2
+train_epochs:
+    value: 500
+use_gpu:
+    value: 1
+wandb:
+    value: true
+wandb_entity:
+    value: null
+wandb_project:
+    value: BAMoE_main
+weight_decay:
+    value: 0.0001

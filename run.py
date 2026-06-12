@@ -82,12 +82,12 @@ def _make_parser() -> argparse.ArgumentParser:
 
     # ---- SingleBias args (Experiment 1) ----
     p.add_argument('--bias_type', type=str, default='global',
-                   choices=['global', 'causal', 'local', 'periodic'],
+                   choices=['global', 'causal', 'local', 'periodic','periodic_fixed', 'reverse_causal', 'alibi', 'relative', 'trend', 'seasonal'],
                    help='Inductive bias for SingleBiasTransformer.')
 
     # ---- BAMoE args (Experiments 2, 3) ----
     p.add_argument('--expert_types', type=str,
-                   default='causal,local,periodic,global',
+                   default='local,global,periodic,periodic_fixed,causal,reverse_causal,trend,seasonal,alibi,relative',
                    help='Comma-separated list of expert bias types.')
     p.add_argument('--top_k', type=int, default=2,
                    help='Number of active experts per token.')
@@ -178,6 +178,7 @@ def set_seed(seed):
 
 def main():
     args = get_args()
+    print(f'{args.expert_types}')
     set_seed(args.seed)
     args.exp_name = make_exp_name(args)
     print(f'\n=== {args.exp_name} ===')
@@ -191,6 +192,7 @@ def main():
         )
 
     if args.mode == 'interpretability':
+        # print(f'exporting experts: {args.expert_types}')
         exp = ExpInterpretability(args)
         exp.run()
         if args.wandb:

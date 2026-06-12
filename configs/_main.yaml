@@ -2,11 +2,14 @@
 # Heterogeneous experts on all 8 datasets x 4 horizons.
 
 model: BAMoE 
-top_k: 1
+top_k: 2
 routing: learned_sparse
 load_balance_coef: 0.01
 
-seq_len: 336
+results: ./_results
+checkpoints: ./_checkpoints
+
+seq_len: 96
 d_model: 64
 n_heads: 8
 n_layers: 6

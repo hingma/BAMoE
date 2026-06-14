@@ -5,7 +5,7 @@
 set -e
 ROOT=${DATA_ROOT:-"./data"}
 PREDS=(96 192 336 720)
-DATASETS=(ETTh1 Weather Traffic)
+DATASETS=(ETTh1 ETTm2 Exchange Electricity ILI)
 
 # ---------- 3a: Expert diversity ablation ----------
 echo "=== 3a: Expert diversity ==="

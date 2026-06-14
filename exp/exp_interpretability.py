@@ -1,25 +1,30 @@
 """
 Experiment 4 — Interpretability Analysis
 
-Runs BAMoE on the test set with routing capture enabled, then produces:
-  4a. Expert activation heatmap (per dataset/horizon)
-  4b. Routing dynamics for a representative sample
-  4c. Correlation with temporal characteristics (FFT, autocorr, trend)
-  4d. Expert attention-pattern visualisation (hooks into the first-layer experts)
+Figure 1 — Real-Time Routing Gate Trajectories
+  Select a continuous test window containing a structural break (detected via
+  CUSUM on the raw signal).  The top panel shows the actual time series; the
+  bottom panel is a stacked area chart of the router's soft probability
+  distribution G(X)_k across patches, perfectly aligned on the same time axis.
+
+Figure 2 — Latent Regime Dimensionality Reduction
+  Collect per-sample routing probability vectors (averaged over patches and
+  channels) from the full out-of-sample evaluation set.  Apply t-SNE (or PCA
+  when N < 30) to project the 4-D router outputs into 2-D.  The resulting
+  scatter reveals tightly clustered "regime islands" — left panel coloured by
+  the dominant expert, right panel coloured by input-signal volatility.
 """
 
 import os
 import numpy as np
 import torch
 import torch.nn.functional as F
-from scipy import stats as scipy_stats
 
 from data_provider.data_factory import data_provider
 from models.BAMoE import BAMoE
-from utils.tools import count_parameters
 from utils.visualize import (
-    plot_expert_heatmap, plot_routing_dynamics,
-    plot_routing_vs_temporal_stats, plot_attention_patterns,
+    plot_routing_gate_trajectories,
+    plot_regime_embedding,
 )
 
 
@@ -41,156 +46,158 @@ class ExpInterpretability:
         self.out_dir = os.path.join(args.results, args.exp_name, 'interpretability')
         os.makedirs(self.out_dir, exist_ok=True)
 
+        self.patch_len = args.patch_len
+        self.stride = args.stride
+
     # ------------------------------------------------------------------
-    # 4a + 4b: collect routing weights from test set
+    # Helpers
     # ------------------------------------------------------------------
 
-    def collect_routing(self):
+    def _load_raw_test_series(self):
+        """Returns (T, C) float32 array of scaled test data (continuous)."""
+        dataset, _ = data_provider(self.args, 'test')
+        return dataset.data_x  # (T, C)
+
+    def _infer_routing(self, window_np):
+        """
+        Run a single forward pass on a (seq_len, C) window.
+        Returns (N_patches, n_experts) soft routing probs, averaged over C.
+        """
+        x = torch.tensor(window_np, dtype=torch.float32).unsqueeze(0).to(self.device)
+        self.model.eval()
+        with torch.no_grad():
+            _, _, routing_log = self.model(x, return_routing=True)
+        if not routing_log:
+            return None
+        logits = routing_log[-1]                         # (C, N, n_experts)
+        probs = F.softmax(logits, dim=-1).cpu().numpy()  # (C, N, n_experts)
+        return probs.mean(axis=0)                        # (N, n_experts)
+
+    def _find_break_window(self, raw_data):
+        """
+        Scan the test series for the seq_len window with the largest CUSUM
+        peak-to-peak (classic level-shift detector).
+
+        Returns
+        -------
+        win_start   : int — index into raw_data
+        break_within: int — structural break position within the window
+        """
+        seq_len = self.args.seq_len
+        T = raw_data.shape[0]
+        search_stride = max(1, (T - seq_len) // 300)
+
+        best_score = -np.inf
+        best_start = 0
+        for start in range(0, T - seq_len, search_stride):
+            w = raw_data[start:start + seq_len, 0]
+            cusum = np.cumsum(w - w.mean())
+            score = float(np.ptp(cusum))   # peak-to-peak
+            if score > best_score:
+                best_score = score
+                best_start = int(start)
+
+        # Pinpoint the break: |CUSUM| maximum, clamped away from edges
+        w = raw_data[best_start:best_start + seq_len, 0]
+        cusum = np.cumsum(w - w.mean())
+        break_within = int(np.argmax(np.abs(cusum)))
+        lo, hi = seq_len // 5, 4 * seq_len // 5
+        break_within = int(np.clip(break_within, lo, hi))
+
+        return best_start, break_within
+
+    def _patch_centers(self, n_patches):
+        """Map patch index → centre timestep within the window."""
+        return np.array([i * self.stride + self.patch_len // 2
+                         for i in range(n_patches)])
+
+    # ------------------------------------------------------------------
+    # Figure 1 — Real-Time Routing Gate Trajectories
+    # ------------------------------------------------------------------
+
+    def run_routing_trajectories(self):
+        raw_data = self._load_raw_test_series()
+        win_start, break_idx = self._find_break_window(raw_data)
+        window = raw_data[win_start:win_start + self.args.seq_len, :]
+
+        routing_seq = self._infer_routing(window)       # (N, n_experts)
+        if routing_seq is None:
+            print('Figure 1 skipped: no routing logits (uniform/random routing mode).')
+            return
+
+        centers = self._patch_centers(routing_seq.shape[0])
+        series = window[:, 0]                           # first channel for display
+
+        save_path = os.path.join(self.out_dir, 'routing_gate_trajectories.pdf')
+        plot_routing_gate_trajectories(
+            series=series,
+            routing_seq=routing_seq,
+            patch_centers=centers,
+            expert_labels=self.expert_types,
+            break_idx=break_idx,
+            save_path=save_path,
+            title=(f'Routing Gate Trajectories — {self.args.data}'
+                   f'  (pred_len={self.args.pred_len})'),
+        )
+        print(f'Saved: {save_path}')
+
+    # ------------------------------------------------------------------
+    # Figure 2 — Latent Regime Dimensionality Reduction
+    # ------------------------------------------------------------------
+
+    def run_regime_embedding(self):
         _, loader = data_provider(self.args, 'test')
-        all_routing = []  # each entry: (B*C, N, n_experts) from last layer
+
+        routing_vecs = []   # (n_experts,) per sample after averaging over N and C
+        volatilities = []   # per-sample input σ, used as a second coloring axis
+
+        n_experts = len(self.expert_types)
         self.model.eval()
         with torch.no_grad():
             for x, _ in loader:
                 x = x.to(self.device)
                 _, _, routing_log = self.model(x, return_routing=True)
-                if routing_log:
-                    # Use last layer's routing logits; softmax to get weights
-                    last = routing_log[-1]          # (B*C, N, n_experts)
-                    weights = F.softmax(last, dim=-1).cpu().numpy()
-                    all_routing.append(weights)
+                if not routing_log:
+                    continue
 
-        if not all_routing:
-            print('No routing logits captured (model may use uniform/random routing).')
-            return None
+                logits = routing_log[-1]                         # (B*C, N, n_experts)
+                probs = F.softmax(logits, dim=-1).cpu().numpy()  # (B*C, N, n_experts)
 
-        routing_arr = np.concatenate(all_routing, axis=0)  # (total_BC, N, E)
-        np.save(os.path.join(self.out_dir, 'routing_weights.npy'), routing_arr)
-        return routing_arr
+                B = x.shape[0]
+                C = x.shape[2]
+                probs_bc = probs.reshape(B, C, -1, n_experts)
+                mean_probs = probs_bc.mean(axis=(1, 2))          # (B, n_experts)
+                routing_vecs.append(mean_probs)
 
-    # ------------------------------------------------------------------
-    # 4a — heatmap
-    # ------------------------------------------------------------------
+                x_np = x.cpu().numpy()
+                volatilities.append(x_np.std(axis=(1, 2)))      # (B,)
 
-    def plot_4a(self, routing_arr):
-        avg = routing_arr.mean(axis=(0, 1))           # (n_experts,)
-        label = f"{self.args.data}/{self.args.pred_len}"
-        matrix = avg[np.newaxis, :]                   # (1, n_experts)
-        save_path = os.path.join(self.out_dir, 'expert_heatmap.pdf')
-        plot_expert_heatmap(matrix, self.expert_types, [label], save_path)
+        if not routing_vecs:
+            print('Figure 2 skipped: no routing data collected.')
+            return
+
+        routing_vecs = np.concatenate(routing_vecs, axis=0)     # (N_total, n_experts)
+        volatilities = np.concatenate(volatilities, axis=0)      # (N_total,)
+        dominant_expert = routing_vecs.argmax(axis=1)            # (N_total,)
+
+        save_path = os.path.join(self.out_dir, 'latent_regime_embedding.pdf')
+        plot_regime_embedding(
+            routing_vecs=routing_vecs,
+            dominant_expert=dominant_expert,
+            volatility=volatilities,
+            expert_labels=self.expert_types,
+            save_path=save_path,
+            title=f'Latent Regime Embedding — {self.args.data}',
+        )
         print(f'Saved: {save_path}')
-
-    # ------------------------------------------------------------------
-    # 4b — routing dynamics for first test sample
-    # ------------------------------------------------------------------
-
-    def plot_4b(self, routing_arr):
-        sample = routing_arr[0]                       # (N, n_experts)
-        save_path = os.path.join(self.out_dir, 'routing_dynamics.pdf')
-        title = f"Routing dynamics — {self.args.data} pred_len={self.args.pred_len}"
-        plot_routing_dynamics(sample, self.expert_types, save_path, title=title)
-        print(f'Saved: {save_path}')
-
-    # ------------------------------------------------------------------
-    # 4c — temporal statistics
-    # ------------------------------------------------------------------
-
-    def plot_4c(self, routing_arr):
-        _, loader = data_provider(self.args, 'test')
-        series_list = []
-        for x, _ in loader:
-            series_list.append(x.numpy())
-            if len(series_list) * x.shape[0] > 200:
-                break
-        series = np.concatenate(series_list, axis=0)  # (N_samples, seq_len, C)
-
-        # aggregate over channels and samples for a single representative series
-        flat = series[:, :, 0]  # (N, seq_len)
-
-        def dominant_freq(s):
-            fft = np.abs(np.fft.rfft(s - s.mean()))
-            return np.argmax(fft[1:]) + 1
-
-        def autocorr_lag1(s):
-            return float(np.corrcoef(s[:-1], s[1:])[0, 1])
-
-        def trend_strength(s):
-            _, _, r, _, _ = scipy_stats.linregress(np.arange(len(s)), s)
-            return float(abs(r))
-
-        stats = {
-            self.args.data: {
-                'dominant_freq': float(np.median([dominant_freq(s) for s in flat])),
-                'autocorr_lag1': float(np.median([autocorr_lag1(s) for s in flat])),
-                'trend_strength': float(np.median([trend_strength(s) for s in flat])),
-            }
-        }
-        routing_dict = {
-            self.args.data: routing_arr.mean(axis=(0, 1))
-        }
-        save_path = os.path.join(self.out_dir, 'routing_vs_temporal_stats.pdf')
-        plot_routing_vs_temporal_stats(stats, routing_dict, self.expert_types, save_path)
-        print(f'Saved: {save_path}')
-
-    # ------------------------------------------------------------------
-    # 4d — attention patterns (hooks into first-layer expert forward passes)
-    # ------------------------------------------------------------------
-
-    def plot_4d(self):
-        _, loader = data_provider(self.args, 'test')
-        x, _ = next(iter(loader))
-        x = x[:1].to(self.device)                    # single sample
-
-        # Channel-independent: take first channel only
-        B, L, C = x.shape
-        x_ci = x[:, :, :1]                           # (1, L, 1)
-
-        attn_maps = []
-
-        def make_hook(container):
-            def hook(module, inp, out):
-                # inp[0]: (B*C, N, D), compute attention map for display
-                xi = inp[0]
-                bci, n, d = xi.shape
-                q = module.q(xi)
-                k = module.k(xi)
-                dh = module.d_head
-                H = module.n_heads
-                q = q.view(bci, n, H, dh).transpose(1, 2)
-                k = k.view(bci, n, H, dh).transpose(1, 2)
-                attn = (q @ k.transpose(-2, -1)) / module.scale  # (bci, H, N, N)
-                attn = torch.softmax(attn, dim=-1)
-                container.append(attn[0, 0].detach().cpu().numpy())  # first head
-            return hook
-
-        first_moe = self.model.layers[0].attn
-        hooks = []
-        for expert in first_moe.experts:
-            container = []
-            hooks.append((expert.register_forward_hook(make_hook(container)), container))
-
-        self.model.eval()
-        with torch.no_grad():
-            self.model(x_ci)
-
-        for h, _ in hooks:
-            h.remove()
-
-        maps = [c for _, c in hooks if c]
-        if maps:
-            attn_maps = [c[0] for c in [cont for _, cont in hooks]]
-            save_path = os.path.join(self.out_dir, 'expert_attention_patterns.pdf')
-            plot_attention_patterns(attn_maps, self.expert_types, save_path)
-            print(f'Saved: {save_path}')
 
     # ------------------------------------------------------------------
     # Entry point
     # ------------------------------------------------------------------
 
     def run(self):
-        routing_arr = self.collect_routing()
-        if routing_arr is not None:
-            self.plot_4a(routing_arr)
-            self.plot_4b(routing_arr)
-            self.plot_4c(routing_arr)
-        self.plot_4d()
+        print('--- Figure 1: Routing Gate Trajectories ---')
+        self.run_routing_trajectories()
+        print('--- Figure 2: Latent Regime Embedding ---')
+        self.run_regime_embedding()
         print('Interpretability analysis complete.')

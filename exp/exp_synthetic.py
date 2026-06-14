@@ -48,14 +48,14 @@ from utils.metrics import mse as mse_fn
 # Maps DGP name → (generator_fn, default_kwargs, matched_expert_type)
 DGP_REGISTRY = {
     'trend':     (generate_trend_dgp,    {},                        'causal'),
-    'shock':     (generate_shock_dgp,    {},                        'alibi'),
+    'shock':     (generate_shock_dgp,    {},                        'local'),
     'cyclical':  (generate_cyclical_dgp, {},                        'periodic'),
     'longrange': (generate_mackey_glass, {},                        'global'),
 }
 
 # Expert types in display order (must match DGP_REGISTRY key order for the
 # diagonal-is-best result in Exp 4.1)
-EXPERT_ORDER = ['causal', 'alibi', 'periodic', 'global']
+EXPERT_ORDER = ['causal', 'local', 'periodic', 'global']
 DGP_ORDER    = ['trend', 'shock', 'cyclical', 'longrange']
 
 
@@ -220,7 +220,7 @@ class ExpSynthetic:
         a = self.args
         ns = argparse.Namespace(
             model='BAMoE',
-            expert_types='causal,alibi,periodic,global',
+            expert_types='causal,local,periodic,global',
             top_k=2,
             routing='learned_sparse',
             load_balance_coef=0.01,
@@ -343,7 +343,7 @@ class ExpSynthetic:
 
         models_cfg = [
             ('SingleBias-periodic', self._single_bias('periodic')),
-            ('SingleBias-alibi',    self._single_bias('alibi')),
+            ('SingleBias-local',    self._single_bias('local')),
             ('SingleBias-causal',   self._single_bias('causal')),
             ('BAMoE',               self._bamoe()),
         ]
@@ -417,8 +417,7 @@ class ExpSynthetic:
                                   'Pure Cyclical\n(regime 0)',
                                   'Pure Shock\n(regime 1)'])
         axes[1].set_ylabel('Test MSE')
-        axes[1].set_title('Exp 4.2: Regime Shift — Per-Domain MSE\n'
-                          '(BAMoE should maintain lowest across all columns)')
+        axes[1].set_title('Exp 4.2: Regime Shift — Per-Domain MSE')
         axes[1].legend(fontsize=8)
 
         plt.tight_layout()
@@ -451,7 +450,7 @@ class ExpSynthetic:
             series = generate_shock_dgp(self.T, sigma=sigma, seed=42)
             for slope in slope_mults:
                 print(f'  σ={sigma:.1f}  γ={slope:.2f}', end='  ')
-                model   = self._single_bias('alibi', slope_mult=slope)
+                model   = self._single_bias('local', slope_mult=slope)
                 trainer = self._trainer(model)
                 trainer.fit(series, a.seq_len, a.pred_len)
                 mse_val = trainer.evaluate_mse(series, a.seq_len, a.pred_len)

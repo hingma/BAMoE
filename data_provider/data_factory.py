@@ -1,6 +1,6 @@
 from torch.utils.data import DataLoader
 from data_provider.data_loader import (
-    Dataset_ETT_hour, Dataset_ETT_minute, Dataset_Custom
+    Dataset_ETT_hour, Dataset_ETT_minute, Dataset_Custom, Dataset_M4
 )
 
 DATA_MAP = {
@@ -12,6 +12,8 @@ DATA_MAP = {
     'Traffic': (Dataset_Custom, 'traffic.csv'),
     'Electricity': (Dataset_Custom, 'electricity.csv'),
     'Exchange': (Dataset_Custom, 'exchange_rate.csv'),
+    'ILI': (Dataset_Custom, 'ILI.csv'),
+    'M4': (Dataset_M4, 'm4')
 }
 
 

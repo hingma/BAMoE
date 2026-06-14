@@ -324,6 +324,157 @@ def plot_attention_patterns(attn_maps, expert_labels, save_path):
 
 
 # ---------------------------------------------------------------------------
+# 4-new-1 — Real-Time Routing Gate Trajectories
+# ---------------------------------------------------------------------------
+
+def plot_routing_gate_trajectories(series, routing_seq, patch_centers,
+                                   expert_labels, break_idx, save_path, title=''):
+    """
+    series        : (seq_len,) time series values
+    routing_seq   : (n_patches, n_experts) soft routing probabilities
+    patch_centers : (n_patches,) timestep of each patch midpoint
+    expert_labels : list of expert names
+    break_idx     : int, timestep of the detected structural break
+    """
+    order, sorted_labels, spans = _sort_by_category(expert_labels)
+    sorted_seq = routing_seq[:, order]
+    n_experts = len(sorted_labels)
+    colors = [_expert_color(lbl) for lbl in sorted_labels]
+
+    seq_len = len(series)
+    t = np.arange(seq_len)
+
+    fig, (ax_ts, ax_rt) = plt.subplots(
+        2, 1, figsize=(13, 6), sharex=True,
+        gridspec_kw={'height_ratios': [1, 1.5], 'hspace': 0.04},
+    )
+
+    # Top panel: raw time series
+    ax_ts.plot(t, series, color='#2c3e50', lw=1.2, alpha=0.9, zorder=3)
+    ax_ts.axvline(break_idx, color='#e74c3c', lw=1.8, ls='--', alpha=0.85,
+                  label='Structural break', zorder=4)
+    ax_ts.axvspan(0, break_idx, alpha=0.06, color='#3498db')
+    ax_ts.axvspan(break_idx, seq_len, alpha=0.06, color='#e74c3c')
+    ax_ts.set_ylabel('Signal (normalised)', fontsize=10)
+    ax_ts.legend(loc='upper right', fontsize=8.5)
+    ax_ts.set_title(title, fontsize=11, pad=7)
+    ax_ts.set_xlim(0, seq_len - 1)
+
+    # Bottom panel: stacked area of routing weights
+    bottom = np.zeros(len(patch_centers))
+    for e in range(n_experts):
+        y = sorted_seq[:, e]
+        ax_rt.fill_between(patch_centers, bottom, bottom + y,
+                           color=colors[e], alpha=0.82, zorder=2)
+        bottom += y
+
+    ax_rt.axvline(break_idx, color='#e74c3c', lw=1.8, ls='--', alpha=0.85, zorder=5)
+    ax_rt.set_xlim(0, seq_len - 1)
+    ax_rt.set_ylim(0, 1.03)
+    ax_rt.set_xlabel('Timestep', fontsize=10)
+    ax_rt.set_ylabel(r'$G(\mathbf{X})_k$  —  routing weight', fontsize=10)
+
+    # Region labels just above the stacked area
+    xform = ax_rt.get_xaxis_transform()
+    ax_rt.text(break_idx * 0.5, 1.025, 'Normal operation',
+               ha='center', va='bottom', fontsize=8.5, color='#2471a3',
+               transform=xform, clip_on=False)
+    ax_rt.text(break_idx + (seq_len - break_idx) * 0.5, 1.025,
+               'Post-break regime',
+               ha='center', va='bottom', fontsize=8.5, color='#c0392b',
+               transform=xform, clip_on=False)
+
+    # Expert legend
+    handles = [
+        mpatches.Patch(facecolor=colors[e], alpha=0.85, label=sorted_labels[e])
+        for e in range(n_experts)
+    ]
+    ax_rt.legend(handles=handles, loc='lower right', fontsize=8,
+                 ncol=min(n_experts, 4), framealpha=0.88, edgecolor='#cccccc')
+
+    plt.tight_layout()
+    os.makedirs(os.path.dirname(save_path) or '.', exist_ok=True)
+    fig.savefig(save_path, dpi=180, bbox_inches='tight')
+    plt.close(fig)
+
+
+# ---------------------------------------------------------------------------
+# 4-new-2 — Latent Regime Dimensionality Reduction
+# ---------------------------------------------------------------------------
+
+def plot_regime_embedding(routing_vecs, dominant_expert, volatility,
+                          expert_labels, save_path, title=''):
+    """
+    routing_vecs    : (N, n_experts) routing probability vectors
+    dominant_expert : (N,) int — argmax expert index per sample
+    volatility      : (N,) float — per-sample input σ
+    expert_labels   : list of expert names
+
+    Left panel: points coloured by the dominant expert (regime type).
+    Right panel: same coordinates, coloured by input-signal volatility
+                 (reveals whether structural intensity maps onto router space).
+    """
+    try:
+        from sklearn.manifold import TSNE
+        from sklearn.decomposition import PCA
+    except ImportError as exc:
+        raise ImportError('scikit-learn is required for regime embedding.') from exc
+
+    N = routing_vecs.shape[0]
+
+    if N >= 30:
+        reducer_name = 't-SNE'
+        perplexity = min(30, max(5, N // 10))
+        coords = TSNE(n_components=2, perplexity=perplexity,
+                      random_state=42, n_iter=1000,
+                      init='pca').fit_transform(routing_vecs)
+    else:
+        reducer_name = 'PCA'
+        coords = PCA(n_components=2, random_state=42).fit_transform(routing_vecs)
+
+    colors = [_expert_color(lbl) for lbl in expert_labels]
+
+    fig, (ax_exp, ax_vol) = plt.subplots(1, 2, figsize=(13, 5.5))
+
+    # Left: coloured by dominant expert
+    for e, lbl in enumerate(expert_labels):
+        mask = dominant_expert == e
+        if mask.any():
+            ax_exp.scatter(coords[mask, 0], coords[mask, 1],
+                           c=colors[e], s=18, alpha=0.65, label=lbl,
+                           edgecolors='none', zorder=3)
+    ax_exp.set_title(f'Regime islands — dominant expert  ({reducer_name})',
+                     fontsize=10)
+    ax_exp.set_xlabel(f'{reducer_name}-1', fontsize=9)
+    ax_exp.set_ylabel(f'{reducer_name}-2', fontsize=9)
+    ax_exp.legend(fontsize=8.5, framealpha=0.88, edgecolor='#cccccc', loc='best')
+    ax_exp.set_aspect('equal', 'datalim')
+    ax_exp.grid(True, lw=0.4, alpha=0.4)
+
+    # Right: coloured by input volatility
+    vmin = float(np.percentile(volatility, 5))
+    vmax = float(np.percentile(volatility, 95))
+    sc = ax_vol.scatter(coords[:, 0], coords[:, 1],
+                        c=volatility, cmap='RdYlGn_r',
+                        vmin=vmin, vmax=vmax,
+                        s=18, alpha=0.65, edgecolors='none', zorder=3)
+    cbar = plt.colorbar(sc, ax=ax_vol, shrink=0.85, pad=0.02)
+    cbar.set_label('Input volatility (σ)', fontsize=9)
+    ax_vol.set_title(f'Regime islands — input volatility  ({reducer_name})',
+                     fontsize=10)
+    ax_vol.set_xlabel(f'{reducer_name}-1', fontsize=9)
+    ax_vol.set_ylabel(f'{reducer_name}-2', fontsize=9)
+    ax_vol.set_aspect('equal', 'datalim')
+    ax_vol.grid(True, lw=0.4, alpha=0.4)
+
+    fig.suptitle(title, fontsize=12, y=1.01)
+    plt.tight_layout()
+    os.makedirs(os.path.dirname(save_path) or '.', exist_ok=True)
+    fig.savefig(save_path, dpi=180, bbox_inches='tight')
+    plt.close(fig)
+
+
+# ---------------------------------------------------------------------------
 # Efficiency Pareto plot (Experiment 5)
 # ---------------------------------------------------------------------------
 

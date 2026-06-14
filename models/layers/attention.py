@@ -262,7 +262,7 @@ ATTENTION_REGISTRY = {
     # 'reverse_causal':  ReverseCausalAttention,
     ###### ========= local
     # 'local':           LocalAttention,
-    'alibi':           ALiBiAttention,
+    'local':           ALiBiAttention,
     ###### ========= periodic
     # 'periodic_fixed':  FixedPeriodicAttention,
     'periodic':        PeriodicAttention,   # backward-compat alias

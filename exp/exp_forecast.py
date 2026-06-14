@@ -155,6 +155,24 @@ class ExpForecast:
 
         preds = np.concatenate(preds, axis=0)
         trues = np.concatenate(trues, axis=0)
+
+        # Persist per-sample losses for statistical significance testing
+        if getattr(self.args, 'save_losses', False):
+            out_dir = os.path.join(self.args.results, self.args.exp_name)
+            os.makedirs(out_dir, exist_ok=True)
+            # Average loss across the prediction window (H) and channels (C)
+            # preds / trues shape: (N, H, C)  →  per_sample shape: (N,)
+            err = preds - trues
+            per_mse = np.mean(err ** 2,      axis=tuple(range(1, err.ndim)))
+            per_mae = np.mean(np.abs(err),   axis=tuple(range(1, err.ndim)))
+            losses_path = os.path.join(out_dir, 'losses.csv')
+            with open(losses_path, 'w', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow(['sample_idx', 'mse', 'mae'])
+                for i, (m, a) in enumerate(zip(per_mse, per_mae)):
+                    writer.writerow([i, f'{m:.8f}', f'{a:.8f}'])
+            print(f'Saved per-sample losses → {losses_path}')
+
         scale = getattr(self, '_naive_scale', None)
         mse_val, mae_val, crps_val, mase_val = metric(preds, trues, naive_scale=scale)
         print(f'Test  | MSE={mse_val:.4f}  MAE={mae_val:.4f}  '

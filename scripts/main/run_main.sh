@@ -4,22 +4,17 @@
 
 set -e
 ROOT=${DATA_ROOT:-"./data"}
-# PREDS=(96 192 336 720)
-PREDS=(96 196)
-# DATASETS=(ETTh1 ETTh2 ETTm1 ETTm2 Weather Traffic Electricity Exchange)
-DATASETS=(ETTh1 ETTh2 ETTm1 ETTm2 Weather)
+PREDS=(96 192 336 720)
+DATASETS=(ETTh1 ETTm2 Exchange Electricity ILI)
 
-# Channels: Traffic~862, Electricity~321, Weather~21, Exchange~8, ETT*~7
+# Channels: Electricity~321, Exchange~8, ETT*~7, ILI~7
 # Effective batch = batch_size × n_channels; tune to stay within ~80 GB VRAM.
 declare -A BATCH_SIZE
 BATCH_SIZE["ETTh1"]=64
-BATCH_SIZE["ETTh2"]=64
-BATCH_SIZE["ETTm1"]=64
 BATCH_SIZE["ETTm2"]=64
 BATCH_SIZE["Exchange"]=64
-BATCH_SIZE["Weather"]=32
 BATCH_SIZE["Electricity"]=8
-BATCH_SIZE["Traffic"]=4
+BATCH_SIZE["ILI"]=64
 
 for DATA in "${DATASETS[@]}"; do
   BS=${BATCH_SIZE[$DATA]:-4}

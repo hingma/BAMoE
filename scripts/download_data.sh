@@ -37,6 +37,15 @@ download "${BASE}/electricity/electricity.csv"  "${DATA_DIR}/electricity.csv"
 echo "=== Exchange Rate ==="
 download "${BASE}/exchange_rate/exchange_rate.csv"  "${DATA_DIR}/exchange_rate.csv"
 
+echo "=== ILI ====="
+download "${BASE}/illness/national_illness.csv"  "${DATA_DIR}/ILI.csv"
+
+
+echo "=== M4 (Hourly) ==="
+mkdir -p "${DATA_DIR}/m4"
+download "${BASE}/m4/Hourly-train.csv"  "${DATA_DIR}/m4/Hourly-train.csv"
+download "${BASE}/m4/Hourly-test.csv"   "${DATA_DIR}/m4/Hourly-test.csv"
+
 echo ""
 echo "All datasets saved to ${DATA_DIR}/"
 ls -lh "${DATA_DIR}/"

@@ -5,7 +5,7 @@
 set -e
 ROOT=${DATA_ROOT:-"./data"}
 PREDS=(96 192 336 720)
-DATASETS=(ETTh1 ETTh2 Weather Traffic)
+DATASETS=(ETTh1 ETTm2 Exchange Electricity ILI)
 
 for DATA in "${DATASETS[@]}"; do
   for PRED in "${PREDS[@]}"; do

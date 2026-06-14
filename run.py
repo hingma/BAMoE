@@ -57,7 +57,7 @@ def _make_parser() -> argparse.ArgumentParser:
     # ---- data ----
     p.add_argument('--data', type=str, default='ETTh1',
                    choices=['ETTh1', 'ETTh2', 'ETTm1', 'ETTm2',
-                            'Weather', 'Traffic', 'Electricity', 'Exchange'])
+                            'Weather', 'Traffic', 'Electricity', 'Exchange', 'ILI'])
     p.add_argument('--root_path', type=str, default='./data/',
                    help='Directory containing dataset CSV files.')
     p.add_argument('--data_path', type=str, default='',

@@ -36,7 +36,7 @@ $PYTHON run_synthetic.py \
   --patch_len    16       \
   --stride       8        \
   --periodic_period 24    \
-  --train_epochs 30       \
+  --train_epochs 10       \
   --patience     5        \
   --batch_size   64       \
   --learning_rate 1e-3    \

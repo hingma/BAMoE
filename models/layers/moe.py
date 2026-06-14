@@ -33,7 +33,7 @@ class BiasAwareMoE(nn.Module):
         def _kwargs(et):
             kw = {}
             if et == 'local':
-                kw['window_size'] = local_window
+                kw['slope_multiplier'] = local_window
             elif et in ('periodic', 'periodic_fixed'):
                 kw['period'] = periodic_period
             elif et == 'relative':

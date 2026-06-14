@@ -50,18 +50,16 @@ class SingleBiasTransformer(nn.Module):
         n_patches = self.patch_embed.n_patches
 
         attn_kwargs = {}
-        if bias_type == 'local':
-            attn_kwargs['window_size'] = getattr(args, 'local_window', 3)
+        if bias_type in ('local', 'alibi'):
+            mult = getattr(args, 'alibi_slope_mult', 1.0)
+            if mult != 1.0:
+                attn_kwargs['slope_multiplier'] = mult
         elif bias_type in ('periodic', 'periodic_fixed'):
             attn_kwargs['period'] = getattr(args, 'periodic_period', 12)
         elif bias_type == 'relative':
             attn_kwargs['max_len'] = n_patches
         elif bias_type in ('trend', 'seasonal'):
             attn_kwargs['ma_kernel'] = getattr(args, 'ma_kernel', 25)
-        elif bias_type == 'alibi':
-            mult = getattr(args, 'alibi_slope_mult', 1.0)
-            if mult != 1.0:
-                attn_kwargs['slope_multiplier'] = mult
 
         self.layers = nn.ModuleList([
             _TransformerLayer(

@@ -7,7 +7,7 @@ ROOT=${DATA_ROOT:-"./data"}
 PREDS=(96 192)
 # DATASETS=(ETTh1 ETTh2 ETTm1 ETTm2 Weather Traffic Electricity Exchange)
 DATASETS=(Electricity)
-BIAS_TYPES=(global causal reverse_causal local alibi periodic_fixed relative trend seasonal)
+BIAS_TYPES=(global causal reverse_causal local alibi periodic relative trend seasonal)
 
 # Channels: Traffic~862, Electricity~321, Weather~21, Exchange~8, ETT*~7
 # Effective batch = batch_size × n_channels; tune to stay within ~80 GB VRAM.

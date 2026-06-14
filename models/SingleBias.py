@@ -58,6 +58,10 @@ class SingleBiasTransformer(nn.Module):
             attn_kwargs['max_len'] = n_patches
         elif bias_type in ('trend', 'seasonal'):
             attn_kwargs['ma_kernel'] = getattr(args, 'ma_kernel', 25)
+        elif bias_type == 'alibi':
+            mult = getattr(args, 'alibi_slope_mult', 1.0)
+            if mult != 1.0:
+                attn_kwargs['slope_multiplier'] = mult
 
         self.layers = nn.ModuleList([
             _TransformerLayer(

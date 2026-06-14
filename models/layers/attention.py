@@ -119,11 +119,14 @@ class ALiBiAttention(_BaseAttention):
 
     Slopes m_h are fixed per-head following the ALiBi geometric schedule:
     m_h = 2^(-8 * h / H) for h = 1, ..., H.
+
+    slope_multiplier γ scales all heads uniformly (γ→0 = global, γ→∞ = very local).
+    Used by Exp 4.3 to sweep mask-constraint stringency.
     """
 
-    def __init__(self, d_model, n_heads, dropout=0.0):
+    def __init__(self, d_model, n_heads, dropout=0.0, slope_multiplier=1.0):
         super().__init__(d_model, n_heads, dropout)
-        slopes = torch.tensor(
+        slopes = slope_multiplier * torch.tensor(
             [2 ** (-8.0 * h / n_heads) for h in range(1, n_heads + 1)]
         )  # (H,)
         self.register_buffer('slopes', slopes)
@@ -143,26 +146,31 @@ class ALiBiAttention(_BaseAttention):
 # Expert 6: Fixed Periodic Expert
 # ---------------------------------------------------------------------------
 
-class FixedPeriodicAttention(_BaseAttention):
-    """Fixed periodic positional bias — B_ij = -min(d_ij, p - d_ij).
+class PeriodicAttention(_BaseAttention):
+    """Periodic positional bias with a learnable period.
 
-    where d_ij = |i - j| mod p.  Tokens at the same phase get zero penalty;
-    tokens at opposite phases get maximum penalty.
+    Uses a differentiable cosine bias:
+        B_ij = 1 - cos(2π * |i-j| / p),  p = exp(log_period)
+
+    Tokens at the same phase (d=0) get zero penalty; tokens at opposite
+    phases get a penalty of 2.  Gradients flow through p via log_period.
     """
 
     def __init__(self, d_model, n_heads, period=12, dropout=0.0):
         super().__init__(d_model, n_heads, dropout)
-        self.period = period
+        # Store log so p stays positive without clamping
+        self.log_period = nn.Parameter(torch.tensor(float(period)).log())
 
     def forward(self, x):
         B, N, D = x.shape
         q, k, v = self._qkv(x)
-        i = torch.arange(N, device=x.device)
-        j = torch.arange(N, device=x.device)
-        d = (i.unsqueeze(1) - j.unsqueeze(0)).abs() % self.period     # (N, N) long
-        bias = -torch.min(d, self.period - d).float()                  # (N, N)
+        idx = torch.arange(N, device=x.device, dtype=x.dtype)
+        d = (idx.unsqueeze(1) - idx.unsqueeze(0)).abs()               # (N, N)
+        p = self.log_period.exp()
+        bias = torch.cos(2.0 * math.pi * d / p) - 1.0                 # (N, N)
         out = self._attend(q, k, v, bias=bias.unsqueeze(0).unsqueeze(0))
         return self._merge(out, B, N, D)
+
 
 
 # ---------------------------------------------------------------------------
@@ -249,15 +257,19 @@ class SeasonalAttention(_BaseAttention):
 
 ATTENTION_REGISTRY = {
     'global':          GlobalAttention,
+    ####### ======== causal
     'causal':          CausalAttention,
-    'reverse_causal':  ReverseCausalAttention,
-    'local':           LocalAttention,
+    # 'reverse_causal':  ReverseCausalAttention,
+    ###### ========= local
+    # 'local':           LocalAttention,
     'alibi':           ALiBiAttention,
-    'periodic_fixed':  FixedPeriodicAttention,
-    'periodic':        FixedPeriodicAttention,   # backward-compat alias
-    'relative':        RelativePositionAttention,
-    'trend':           TrendAttention,
-    'seasonal':        SeasonalAttention,
+    ###### ========= periodic
+    # 'periodic_fixed':  FixedPeriodicAttention,
+    'periodic':        PeriodicAttention,   # backward-compat alias
+    # 'relative':        RelativePositionAttention,
+    ###### =========== trend/seasonal
+    # 'trend':           TrendAttention,
+    # 'seasonal':        SeasonalAttention,
 }
 
 

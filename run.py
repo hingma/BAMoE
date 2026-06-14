@@ -82,7 +82,7 @@ def _make_parser() -> argparse.ArgumentParser:
 
     # ---- SingleBias args (Experiment 1) ----
     p.add_argument('--bias_type', type=str, default='global',
-                   choices=['global', 'causal', 'local', 'periodic','periodic_fixed', 'reverse_causal', 'alibi', 'relative', 'trend', 'seasonal'],
+                   choices=['global', 'causal', 'local', 'periodic','periodic_fixed', 'reverse_causal', 'alibi', 'relative', 'trend', 'season4al'],
                    help='Inductive bias for SingleBiasTransformer.')
 
     # ---- BAMoE args (Experiments 2, 3) ----

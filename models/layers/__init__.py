@@ -4,7 +4,7 @@ from models.layers.attention import (
     ReverseCausalAttention,
     LocalAttention,
     ALiBiAttention,
-    FixedPeriodicAttention,
+    PeriodicAttention,
     RelativePositionAttention,
     TrendAttention,
     SeasonalAttention,

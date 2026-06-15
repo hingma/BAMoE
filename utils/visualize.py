@@ -586,6 +586,89 @@ def plot_attention_snapshots(maps_per_period, expert_labels, save_path, title=''
 
 
 # ---------------------------------------------------------------------------
+# Best-case comparison: BAMoE vs. single-bias models on a chosen test sample
+# ---------------------------------------------------------------------------
+
+def plot_best_case_comparison(input_series, gt_series, bamoe_series, sb_series,
+                               expert_labels, save_path, title='', advantage=None):
+    """
+    Single time-axis plot showing input on the left and all forecast paths on
+    the right, for the test sample where BAMoE most outperforms every single-
+    bias baseline.
+
+    input_series  : (seq_len,) — historical input (normalised)
+    gt_series     : (pred_len,) — ground truth
+    bamoe_series  : (pred_len,) — BAMoE prediction
+    sb_series     : {bias_type: (pred_len,)} — per-expert SingleBias predictions
+    expert_labels : list of bias-type strings (defines iteration order)
+    advantage     : float — BAMoE MSE improvement over best single-bias (optional)
+    """
+    seq_len  = len(input_series)
+    pred_len = len(gt_series)
+
+    t_in   = np.arange(seq_len)
+    t_pred = np.arange(seq_len, seq_len + pred_len)
+
+    fig, ax = plt.subplots(figsize=(14, 4.2))
+
+    # Shaded background regions
+    ax.axvspan(0,        seq_len,            alpha=0.05, color='#3498db', zorder=0)
+    ax.axvspan(seq_len,  seq_len + pred_len, alpha=0.05, color='#e74c3c', zorder=0)
+
+    # Dividing line between input and forecast
+    ax.axvline(seq_len, color='#555555', lw=1.0, ls=':', alpha=0.7, zorder=3)
+
+    # Input
+    ax.plot(t_in, input_series, color='#2c3e50', lw=1.3, label='Input', zorder=4)
+
+    # Ground truth
+    ax.plot(t_pred, gt_series, color='#000000', lw=2.2, label='Ground Truth', zorder=6)
+
+    # BAMoE prediction
+    ax.plot(t_pred, bamoe_series, color='#e74c3c', lw=2.0, label='BAMoE', zorder=5)
+
+    # Single-bias predictions (dashed, per-expert colour)
+    for bias_type in expert_labels:
+        series = sb_series.get(bias_type)
+        if series is None:
+            continue
+        color = _expert_color(bias_type)
+        ax.plot(t_pred, series, color=color, lw=1.3, ls='--', alpha=0.85,
+                label=f'SingleBias-{bias_type}', zorder=3)
+
+    ax.set_xlim(0, seq_len + pred_len - 1)
+    ax.set_xlabel('Timestep', fontsize=10)
+    ax.set_ylabel('Value (normalised)', fontsize=10)
+
+    # Region labels just above the plot area
+    xform = ax.get_xaxis_transform()
+    ax.text(seq_len / 2, 1.012, 'Input',
+            ha='center', va='bottom', fontsize=9, color='#2980b9',
+            transform=xform, clip_on=False)
+    ax.text(seq_len + pred_len / 2, 1.012, 'Forecast Horizon',
+            ha='center', va='bottom', fontsize=9, color='#c0392b',
+            transform=xform, clip_on=False)
+
+    # BAMoE advantage annotation
+    if advantage is not None:
+        ax.text(0.985, 0.96,
+                f'BAMoE ΔMSE = +{advantage:.4f}',
+                transform=ax.transAxes, ha='right', va='top', fontsize=9,
+                color='#e74c3c', fontweight='bold',
+                bbox=dict(boxstyle='round,pad=0.3', fc='white',
+                          ec='#e74c3c', alpha=0.88))
+
+    ax.legend(loc='upper left', fontsize=8.5, ncol=2,
+              framealpha=0.88, edgecolor='#cccccc')
+    ax.set_title(title, fontsize=11, pad=14)
+
+    plt.tight_layout()
+    os.makedirs(os.path.dirname(save_path) or '.', exist_ok=True)
+    fig.savefig(save_path, dpi=180, bbox_inches='tight')
+    plt.close(fig)
+
+
+# ---------------------------------------------------------------------------
 # Efficiency Pareto plot (Experiment 5)
 # ---------------------------------------------------------------------------
 

@@ -22,10 +22,12 @@ import torch.nn.functional as F
 
 from data_provider.data_factory import data_provider
 from models.BAMoE import BAMoE
+from models.SingleBias import SingleBiasTransformer
 from utils.visualize import (
     plot_routing_gate_trajectories,
     plot_regime_embedding,
     plot_attention_snapshots,
+    plot_best_case_comparison,
 )
 
 
@@ -259,6 +261,121 @@ class ExpInterpretability:
         print(f'Saved: {save_path}')
 
     # ------------------------------------------------------------------
+    # Figure 4 — Best-Case Comparison: BAMoE vs. Single-Bias Models
+    # ------------------------------------------------------------------
+
+    def _load_single_bias_model(self, bias_type):
+        """
+        Instantiate a SingleBiasTransformer for *bias_type* on the same
+        dataset / horizon as the current BAMoE run and load its checkpoint.
+
+        Checkpoint path convention (matches make_exp_name in run.py):
+          <checkpoints>/SingleBias_<bias_type>_<data>_sl<seq>_pl<pred>/checkpoint.pth
+        """
+        import copy
+        sb_args = copy.copy(self.args)
+        sb_args.bias_type = bias_type
+        sb_args.exp_name = (
+            f'SingleBias_{bias_type}_{self.args.data}'
+            f'_sl{self.args.seq_len}_pl{self.args.pred_len}'
+        )
+        model = SingleBiasTransformer(sb_args).to(self.device)
+        ckpt = os.path.join(self.args.checkpoints, sb_args.exp_name, 'checkpoint.pth')
+        if os.path.exists(ckpt):
+            model.load_state_dict(torch.load(ckpt, map_location=self.device))
+            print(f'  Loaded SingleBias ({bias_type}): {ckpt}')
+        else:
+            print(f'  WARNING: SingleBias ({bias_type}) checkpoint not found at {ckpt}; '
+                  f'using random weights.')
+        return model
+
+    def _collect_predictions(self, model):
+        """
+        Run *model* over the full test set.
+
+        Returns
+        -------
+        preds : (N, pred_len, C) float32 ndarray
+        trues : (N, pred_len, C) float32 ndarray
+        """
+        _, loader = data_provider(self.args, 'test')
+        all_preds, all_trues = [], []
+        model.eval()
+        with torch.no_grad():
+            for x, y in loader:
+                x = x.to(self.device)
+                pred, _, _ = model(x)
+                all_preds.append(pred.cpu().numpy())
+                all_trues.append(y.numpy())
+        return np.concatenate(all_preds, axis=0), np.concatenate(all_trues, axis=0)
+
+    def run_best_case_comparison(self):
+        """
+        Figure 4 — Best-Case Forecast Comparison.
+
+        Algorithm
+        ---------
+        1. Collect BAMoE predictions + per-sample MSE on the full test set.
+        2. For every expert type, load the matching SingleBias checkpoint and
+           collect its per-sample MSE.
+        3. Select the test sample index *i* that maximises
+               min_k MSE_SingleBias_k(i) − MSE_BAMoE(i)
+           i.e. the moment where BAMoE beats *every* single-bias variant by
+           the widest margin.
+        4. Plot: input sequence (left) | all forecast paths + ground truth (right).
+        """
+        print('  Collecting BAMoE predictions …')
+        bamoe_preds, trues = self._collect_predictions(self.model)
+        bamoe_mse = np.mean((bamoe_preds - trues) ** 2, axis=(1, 2))   # (N,)
+
+        sb_preds_dict: dict = {}
+        sb_mse_dict:   dict = {}
+        for bias_type in self.expert_types:
+            print(f'  Collecting SingleBias ({bias_type}) predictions …')
+            sb_model = self._load_single_bias_model(bias_type)
+            preds, _ = self._collect_predictions(sb_model)
+            sb_preds_dict[bias_type] = preds
+            sb_mse_dict[bias_type]   = np.mean((preds - trues) ** 2, axis=(1, 2))
+
+        # Best sample: largest BAMoE advantage over the strongest single-bias competitor
+        sb_mse_stack = np.stack(list(sb_mse_dict.values()), axis=0)   # (E, N)
+        best_sb_mse  = sb_mse_stack.min(axis=0)                        # (N,)
+        advantage    = best_sb_mse - bamoe_mse                          # (N,)
+        best_idx     = int(np.argmax(advantage))
+
+        print(f'  Best sample: index={best_idx}, '
+              f'BAMoE MSE={bamoe_mse[best_idx]:.4f}, '
+              f'best SingleBias MSE={best_sb_mse[best_idx]:.4f}, '
+              f'advantage ΔMSE={advantage[best_idx]:.4f}')
+
+        # Retrieve the raw input for the chosen sample
+        dataset, _ = data_provider(self.args, 'test')
+        x_best, _ = dataset[best_idx]                 # (seq_len, C), (pred_len, C)
+        x_best = np.asarray(x_best)                   # (seq_len, C)
+
+        # Use the first channel for display
+        channel = 0
+        input_series  = x_best[:, channel]
+        gt_series     = trues[best_idx, :, channel]
+        bamoe_series  = bamoe_preds[best_idx, :, channel]
+        sb_series     = {bt: sb_preds_dict[bt][best_idx, :, channel]
+                         for bt in self.expert_types}
+
+        save_path = os.path.join(self.out_dir, 'best_case_comparison.pdf')
+        plot_best_case_comparison(
+            input_series=input_series,
+            gt_series=gt_series,
+            bamoe_series=bamoe_series,
+            sb_series=sb_series,
+            expert_labels=self.expert_types,
+            save_path=save_path,
+            title=(f'Best-Case Forecast Comparison — {self.args.data}'
+                   f'  (pred_len={self.args.pred_len}, sample #{best_idx})'),
+            advantage=float(advantage[best_idx]),
+        )
+        print(f'Saved: {save_path}')
+
+    # ------------------------------------------------------------------
     # Entry point
     # ------------------------------------------------------------------
 
@@ -269,4 +386,6 @@ class ExpInterpretability:
         self.run_regime_embedding()
         print('--- Figure 3: Attention Snapshots ---')
         self.run_attention_snapshots()
+        print('--- Figure 4: Best-Case Comparison vs. Single-Bias Models ---')
+        self.run_best_case_comparison()
         print('Interpretability analysis complete.')

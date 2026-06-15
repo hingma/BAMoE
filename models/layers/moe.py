@@ -42,6 +42,7 @@ class BiasAwareMoE(nn.Module):
                 kw['ma_kernel'] = ma_kernel
             return kw
 
+        self.expert_types = expert_types
         self.experts = nn.ModuleList([
             build_attention(et, d_model, n_heads, dropout=dropout, **_kwargs(et))
             for et in expert_types
@@ -104,6 +105,15 @@ class BiasAwareMoE(nn.Module):
             lb_loss = self._balance_loss(logits)
 
         return out, lb_loss, router_logits
+
+    # ------------------------------------------------------------------
+    def get_expert_attn_maps(self):
+        """Return {expert_type: (N, N) numpy array} from the last forward pass."""
+        return {
+            et: expert._last_attn
+            for et, expert in zip(self.expert_types, self.experts)
+            if hasattr(expert, '_last_attn')
+        }
 
     # ------------------------------------------------------------------
     @staticmethod

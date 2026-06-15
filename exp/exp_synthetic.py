@@ -222,7 +222,7 @@ class ExpSynthetic:
             model='BAMoE',
             expert_types='causal,local,periodic,global',
             top_k=2,
-            routing='learned_sparse',
+            routing='dense',
             load_balance_coef=0.01,
             local_window=getattr(a, 'local_window', 3),
             periodic_period=getattr(a, 'periodic_period', 24),

@@ -25,6 +25,7 @@ from models.BAMoE import BAMoE
 from utils.visualize import (
     plot_routing_gate_trajectories,
     plot_regime_embedding,
+    plot_attention_snapshots,
 )
 
 
@@ -112,6 +113,44 @@ class ExpInterpretability:
                          for i in range(n_patches)])
 
     # ------------------------------------------------------------------
+    # Helpers (attention maps)
+    # ------------------------------------------------------------------
+
+    def _infer_attention_maps(self, window_np):
+        """Run a forward pass on (seq_len, C) window; return per-expert (N, N) maps."""
+        x = torch.tensor(window_np, dtype=torch.float32).unsqueeze(0).to(self.device)
+        self.model.eval()
+        with torch.no_grad():
+            self.model(x)
+        return self.model.get_expert_attn_maps()   # {expert_type: (N, N)}
+
+    def _pick_snapshot_windows(self, raw_data, win_start, break_idx):
+        """
+        Derive 3 representative seq_len windows anchored in each regime.
+
+        Returns
+        -------
+        windows : list of 3 (seq_len, C) arrays
+        labels  : ['normal_operation', 'at_break', 'post_break']
+        """
+        seq_len = self.args.seq_len
+        T = raw_data.shape[0]
+        half = seq_len // 2
+
+        abs_break = win_start + break_idx
+        centers = [
+            win_start + break_idx // 2,                              # normal regime centre
+            abs_break,                                                # at the break
+            abs_break + (seq_len - break_idx) // 2,                  # post-break centre
+        ]
+        labels = ['normal_operation', 'at_break', 'post_break']
+        windows = []
+        for c in centers:
+            start = int(np.clip(c - half, 0, T - seq_len))
+            windows.append(raw_data[start:start + seq_len, :])
+        return windows, labels
+
+    # ------------------------------------------------------------------
     # Figure 1 — Real-Time Routing Gate Trajectories
     # ------------------------------------------------------------------
 
@@ -192,6 +231,34 @@ class ExpInterpretability:
         print(f'Saved: {save_path}')
 
     # ------------------------------------------------------------------
+    # Figure 3 — Per-Expert Attention Snapshots at 3 Regime Checkpoints
+    # ------------------------------------------------------------------
+
+    def run_attention_snapshots(self):
+        raw_data = self._load_raw_test_series()
+        win_start, break_idx = self._find_break_window(raw_data)
+
+        windows, labels = self._pick_snapshot_windows(raw_data, win_start, break_idx)
+
+        maps_per_period = []
+        for window, label in zip(windows, labels):
+            attn_maps = self._infer_attention_maps(window)
+            if not attn_maps:
+                print(f'Figure 3 skipped for {label}: no attention maps captured.')
+                return
+            maps_per_period.append((label, attn_maps))
+
+        save_path = os.path.join(self.out_dir, 'attention_snapshots.pdf')
+        plot_attention_snapshots(
+            maps_per_period=maps_per_period,
+            expert_labels=self.expert_types,
+            save_path=save_path,
+            title=(f'Per-Expert Attention Snapshots — {self.args.data}'
+                   f'  (pred_len={self.args.pred_len})'),
+        )
+        print(f'Saved: {save_path}')
+
+    # ------------------------------------------------------------------
     # Entry point
     # ------------------------------------------------------------------
 
@@ -200,4 +267,6 @@ class ExpInterpretability:
         self.run_routing_trajectories()
         print('--- Figure 2: Latent Regime Embedding ---')
         self.run_regime_embedding()
+        print('--- Figure 3: Attention Snapshots ---')
+        self.run_attention_snapshots()
         print('Interpretability analysis complete.')

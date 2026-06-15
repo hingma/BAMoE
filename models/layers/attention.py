@@ -35,6 +35,8 @@ class _BaseAttention(nn.Module):
             attn = attn.masked_fill(mask, float('-inf'))
         attn = F.softmax(attn, dim=-1)
         attn = attn.nan_to_num(0.0)
+        # Cache head- and batch-averaged map for post-hoc visualisation.
+        self._last_attn = attn.detach().mean(dim=(0, 1)).cpu().numpy()  # (N, N)
         return self.dropout(attn) @ v
 
     def _merge(self, x, B, N, D):

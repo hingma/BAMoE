@@ -94,6 +94,10 @@ class BAMoE(nn.Module):
         self.norm = nn.LayerNorm(args.d_model)
         self.head = nn.Linear(n_patches * args.d_model, args.pred_len)
 
+    def get_expert_attn_maps(self, layer_idx=-1):
+        """Return per-expert attention maps from the specified transformer layer."""
+        return self.layers[layer_idx].attn.get_expert_attn_maps()
+
     def forward(self, x, return_routing=False):
         """
         x : (B, seq_len, C)

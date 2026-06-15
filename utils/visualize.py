@@ -475,6 +475,117 @@ def plot_regime_embedding(routing_vecs, dominant_expert, volatility,
 
 
 # ---------------------------------------------------------------------------
+# 4-new-3 — Per-Expert Attention Snapshots at 3 Regime Checkpoints
+# ---------------------------------------------------------------------------
+
+_PERIOD_COLORS = {
+    'normal_operation': '#2471a3',
+    'at_break':         '#e74c3c',
+    'post_break':       '#922b21',
+}
+_PERIOD_DISPLAY = {
+    'normal_operation': 'Normal\nOperation',
+    'at_break':         'At Break',
+    'post_break':       'Post-Break\nRegime',
+}
+
+
+def plot_attention_snapshots(maps_per_period, expert_labels, save_path, title=''):
+    """
+    Visualise per-expert head-averaged attention maps at three temporal checkpoints.
+
+    maps_per_period : list of (period_label, {expert_type: (N, N) np.array})
+                      period_label ∈ {'normal_operation', 'at_break', 'post_break'}
+    expert_labels   : list of expert type names (order matches the model's expert list)
+
+    Layout: rows = periods, columns = experts (sorted into category groups).
+    A coloured header strip labels each expert category; a coloured left strip
+    identifies the temporal period.  Each cell shows the softmax attention map
+    averaged over heads and batch dimension.
+    """
+    order, sorted_labels, spans = _sort_by_category(expert_labels)
+    n_periods = len(maps_per_period)
+    n_experts = len(sorted_labels)
+
+    # GridSpec: 1 header row + n_periods map rows; 1 period-label col + n_experts map cols
+    fig = plt.figure(figsize=(3.0 * n_experts + 1.0, 2.8 * n_periods + 1.0))
+    gs = GridSpec(
+        n_periods + 1, n_experts + 1, figure=fig,
+        height_ratios=[0.10] + [1.0] * n_periods,
+        width_ratios=[0.08] + [1.0] * n_experts,
+        hspace=0.40, wspace=0.40,
+    )
+
+    # Top-left corner: empty
+    ax_corner = fig.add_subplot(gs[0, 0])
+    ax_corner.set_visible(False)
+
+    # Expert category header strips (top row, columns 1…n_experts)
+    for start, end, cname, color in spans:
+        ax_hdr = fig.add_subplot(gs[0, start + 1: end + 2])
+        ax_hdr.set_facecolor(color)
+        ax_hdr.text(0.5, 0.5, cname, transform=ax_hdr.transAxes,
+                    ha='center', va='center',
+                    color='white', fontsize=9, fontweight='bold')
+        ax_hdr.set_xticks([])
+        ax_hdr.set_yticks([])
+        for spine in ax_hdr.spines.values():
+            spine.set_visible(False)
+
+    # Period rows
+    for row, (period_label, attn_dict) in enumerate(maps_per_period):
+        pcolor   = _PERIOD_COLORS.get(period_label, '#555555')
+        pdisplay = _PERIOD_DISPLAY.get(period_label, period_label)
+
+        # Left period-label strip
+        ax_lbl = fig.add_subplot(gs[row + 1, 0])
+        ax_lbl.set_facecolor(pcolor)
+        ax_lbl.text(0.5, 0.5, pdisplay, transform=ax_lbl.transAxes,
+                    ha='center', va='center',
+                    color='white', fontsize=8.5, fontweight='bold', rotation=90)
+        ax_lbl.set_xticks([])
+        ax_lbl.set_yticks([])
+        for spine in ax_lbl.spines.values():
+            spine.set_visible(False)
+
+        # Expert attention maps
+        for col, lbl in enumerate(sorted_labels):
+            ax = fig.add_subplot(gs[row + 1, col + 1])
+            orig_idx  = order[col]
+            attn_map  = attn_dict.get(expert_labels[orig_idx])
+
+            if attn_map is None:
+                ax.text(0.5, 0.5, 'N/A', ha='center', va='center',
+                        transform=ax.transAxes, color='grey', fontsize=9)
+                ax.set_xticks([])
+                ax.set_yticks([])
+            else:
+                im = ax.imshow(attn_map, aspect='auto', cmap='Blues', vmin=0, vmax=1)
+                plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+                ax.tick_params(labelsize=6)
+
+            # Expert name only on top row
+            if row == 0:
+                ax.set_title(lbl, color=_expert_color(lbl), fontsize=8.5, pad=4)
+            # Y-axis label only for leftmost column
+            if col == 0:
+                ax.set_ylabel('Query patch', fontsize=7.5)
+            else:
+                ax.set_yticks([])
+            # X-axis label only for bottom row
+            if row == n_periods - 1:
+                ax.set_xlabel('Key patch', fontsize=7.5)
+            else:
+                ax.set_xticks([])
+
+    fig.suptitle(title, fontsize=11, y=1.005)
+    plt.tight_layout()
+    os.makedirs(os.path.dirname(save_path) or '.', exist_ok=True)
+    fig.savefig(save_path, dpi=180, bbox_inches='tight')
+    plt.close(fig)
+
+
+# ---------------------------------------------------------------------------
 # Efficiency Pareto plot (Experiment 5)
 # ---------------------------------------------------------------------------
 

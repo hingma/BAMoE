@@ -13,8 +13,24 @@ Figure 2 — Latent Regime Dimensionality Reduction
   when N < 30) to project the 4-D router outputs into 2-D.  The resulting
   scatter reveals tightly clustered "regime islands" — left panel coloured by
   the dominant expert, right panel coloured by input-signal volatility.
+
+Figure 5 — KL-Divergence Structural Break Detection
+  Compute D_KL(G_t || G_{t+1}) between consecutive patch routing distributions
+  on the structural-break window and correlate with the CUSUM break indicator.
+  A statistically significant Pearson r confirms context-aware regime discovery.
+
+Figure 6 — Multinomial Logistic Regression Econometric Mapping
+  Regress the dominant expert choice on per-sample rolling volatility (σ),
+  trend strength (τ), and seasonality (γ).  Reports β, SE, and p-values as a
+  publication-ready coefficient table for each expert vs. the baseline class.
+
+Figure 7 — Mutual Information and Entropy Disentanglement
+  Compute the temporal routing entropy H(G_t) over the full test set and the
+  MI matrix I(G_k; Z) for Z ∈ {volatility, trend, seasonality}.  A diagonal-
+  dominant MI matrix is mathematical proof of expert specialisation.
 """
 
+import csv
 import os
 import numpy as np
 import torch
@@ -28,6 +44,9 @@ from utils.visualize import (
     plot_regime_embedding,
     plot_attention_snapshots,
     plot_best_case_comparison,
+    plot_kl_divergence_analysis,
+    plot_logistic_regression_table,
+    plot_mi_entropy_analysis,
 )
 
 
@@ -376,6 +395,366 @@ class ExpInterpretability:
         print(f'Saved: {save_path}')
 
     # ------------------------------------------------------------------
+    # Figure 5 — KL-Divergence Structural Break Detection
+    # ------------------------------------------------------------------
+
+    def _compute_kl_sequence(self, routing_seq):
+        """D_KL(G_t || G_{t+1}) for consecutive patch routing distributions."""
+        eps = 1e-9
+        p = np.clip(routing_seq[:-1], eps, 1.0)
+        q = np.clip(routing_seq[1:],  eps, 1.0)
+        p = p / p.sum(axis=1, keepdims=True)
+        q = q / q.sum(axis=1, keepdims=True)
+        return (p * np.log(p / q)).sum(axis=1)   # (N-1,)
+
+    def run_kl_divergence_analysis(self):
+        """
+        Figure 5 — KL-Divergence Structural Break Detection.
+
+        Computes D_KL(G_t || G_{t+1}) across the CUSUM break window and reports
+        the Pearson correlation between KL spikes and the CUSUM break indicator.
+        """
+        try:
+            from scipy import stats as scipy_stats
+        except ImportError:
+            print('Figure 5 skipped: scipy is required.')
+            return
+
+        raw_data = self._load_raw_test_series()
+        win_start, break_idx = self._find_break_window(raw_data)
+        window = raw_data[win_start:win_start + self.args.seq_len, :]
+
+        routing_seq = self._infer_routing(window)
+        if routing_seq is None:
+            print('Figure 5 skipped: no routing logits.')
+            return
+
+        kl_seq   = self._compute_kl_sequence(routing_seq)         # (N-1,)
+        centers  = self._patch_centers(routing_seq.shape[0])       # (N,)
+        kl_times = (centers[:-1] + centers[1:]) / 2.0             # (N-1,)
+
+        series       = window[:, 0]
+        cusum        = np.cumsum(series - series.mean())
+        cusum_delta  = np.abs(np.diff(cusum))                      # (seq_len-1,)
+
+        # Aggregate |Δcusum| over each inter-patch gap for correlation
+        gap_break_score = np.zeros(len(kl_seq))
+        for i in range(len(kl_seq)):
+            t0 = max(0, int(centers[i]))
+            t1 = min(len(cusum_delta), int(centers[i + 1]))
+            if t0 < t1:
+                gap_break_score[i] = cusum_delta[t0:t1].max()
+
+        r, p_val = scipy_stats.pearsonr(kl_seq, gap_break_score)
+
+        save_path = os.path.join(self.out_dir, 'kl_divergence_analysis.pdf')
+        plot_kl_divergence_analysis(
+            series=series,
+            cusum=cusum,
+            kl_seq=kl_seq,
+            kl_timesteps=kl_times,
+            break_idx=break_idx,
+            r=r,
+            p_val=p_val,
+            save_path=save_path,
+            title=(f'KL-Divergence Structural Break Analysis — {self.args.data}'
+                   f'  (pred_len={self.args.pred_len})'),
+        )
+        print(f'Saved: {save_path}')
+        print(f'  KL–CUSUM Pearson r={r:.4f}, p={p_val:.4e}')
+
+        # Save KL sequence
+        csv_seq = os.path.join(self.out_dir, 'kl_divergence_sequence.csv')
+        with open(csv_seq, 'w', newline='') as f:
+            w = csv.writer(f)
+            w.writerow(['timestep', 'kl_divergence', 'cusum_break_score'])
+            for t, kl, gb in zip(kl_times, kl_seq, gap_break_score):
+                w.writerow([f'{t:.2f}', f'{kl:.8f}', f'{gb:.8f}'])
+        print(f'Saved: {csv_seq}')
+
+        # Save summary statistics
+        csv_sum = os.path.join(self.out_dir, 'kl_divergence_summary.csv')
+        peak_i  = int(np.argmax(kl_seq))
+        with open(csv_sum, 'w', newline='') as f:
+            w = csv.writer(f)
+            w.writerow(['metric', 'value'])
+            w.writerow(['pearson_r',        f'{r:.8f}'])
+            w.writerow(['p_value',          f'{p_val:.8e}'])
+            w.writerow(['break_idx',        break_idx])
+            w.writerow(['kl_peak_timestep', f'{kl_times[peak_i]:.2f}'])
+            w.writerow(['kl_peak_value',    f'{kl_seq[peak_i]:.8f}'])
+            w.writerow(['kl_mean',          f'{kl_seq.mean():.8f}'])
+            w.writerow(['kl_std',           f'{kl_seq.std():.8f}'])
+        print(f'Saved: {csv_sum}')
+
+    # ------------------------------------------------------------------
+    # Figure 6 — Multinomial Logistic Regression Mapping
+    # ------------------------------------------------------------------
+
+    def _compute_sample_features(self, x_np):
+        """
+        Compute (volatility σ, trend τ, seasonality γ) for a (seq_len, C)
+        window using channel 0.
+
+        Returns
+        -------
+        sigma : float — rolling std of the full window
+        tau   : float — OLS slope (directional velocity)
+        gamma : float — autocorrelation at the primary seasonal lag
+        """
+        sig = x_np[:, 0].astype(np.float64)
+        n   = len(sig)
+
+        sigma = float(sig.std())
+        tau   = float(np.polyfit(np.arange(n, dtype=np.float64), sig, 1)[0])
+
+        freq    = getattr(self.args, 'freq', 'h').lower().rstrip('t')
+        lag_map = {'h': 24, 'm': 60, 'd': 7, 'w': 4, 'b': 5, 's': 12}
+        lag     = min(lag_map.get(freq, 24), n // 4)
+        if lag > 0 and n > lag:
+            gamma = float(np.corrcoef(sig[:-lag], sig[lag:])[0, 1])
+            gamma = 0.0 if np.isnan(gamma) else gamma
+        else:
+            gamma = 0.0
+
+        return sigma, tau, gamma
+
+    def _fit_mnlogit(self, X, y, n_experts):
+        """
+        Fit a Multinomial Logistic Regression and return a coefficient table.
+
+        Tries statsmodels (gives SE + p-values); falls back to sklearn
+        (coefficients only).
+
+        Returns
+        -------
+        list of dicts: {expert, coef:[intercept,f1,f2,...], se, pval}
+        statsmodels convention: base class = last numeric label (n_experts-1).
+        """
+        n_feat   = X.shape[1]
+        nan_row  = lambda: [np.nan] * (n_feat + 1)
+        zero_row = lambda: [0.0]    * (n_feat + 1)
+
+        try:
+            import statsmodels.api as sm
+            X_sm = sm.add_constant(X, has_constant='add')
+            res  = sm.MNLogit(y, X_sm).fit(method='bfgs', maxiter=300, disp=False)
+            # params/bse/pvalues: (n_feat+1, n_experts-1)
+            # Column k → log-odds of class k vs base class (n_experts-1)
+            table = [{
+                'expert': self.expert_types[-1] + ' (base)',
+                'coef': zero_row(), 'se': nan_row(), 'pval': nan_row(),
+            }]
+            for k in range(n_experts - 1):
+                table.append({
+                    'expert': self.expert_types[k],
+                    'coef':   res.params[:, k].tolist(),
+                    'se':     res.bse[:, k].tolist(),
+                    'pval':   res.pvalues[:, k].tolist(),
+                })
+            return table
+
+        except Exception as e_sm:
+            print(f'  statsmodels failed ({e_sm}); using sklearn (no p-values).')
+            from sklearn.linear_model import LogisticRegression
+            clf = LogisticRegression(
+                multi_class='multinomial', solver='lbfgs', max_iter=500, C=1e4
+            )
+            clf.fit(X, y)
+            table = []
+            for k in range(n_experts):
+                coef_k = [float(clf.intercept_[k])] + clf.coef_[k].tolist()
+                table.append({
+                    'expert': self.expert_types[k],
+                    'coef': coef_k, 'se': nan_row(), 'pval': nan_row(),
+                })
+            return table
+
+    def run_logistic_regression_mapping(self):
+        """
+        Figure 6 — Multinomial Logistic Regression Econometric Mapping.
+
+        Features : per-sample rolling volatility σ, trend strength τ,
+                   seasonality γ (all standardised to μ=0, σ=1).
+        Target   : argmax expert (dominant routing weight per test sample).
+        Reports  : β, SE, p-values for each expert vs. the baseline class.
+        """
+        _, loader = data_provider(self.args, 'test')
+
+        feature_rows, dominant_experts = [], []
+        n_experts = len(self.expert_types)
+
+        self.model.eval()
+        with torch.no_grad():
+            for x, _ in loader:
+                x_dev = x.to(self.device)
+                _, _, routing_log = self.model(x_dev, return_routing=True)
+                if not routing_log:
+                    continue
+                logits = routing_log[-1]
+                probs  = F.softmax(logits, dim=-1).cpu().numpy()
+                B, C   = x.shape[0], x.shape[2]
+                mean_probs = probs.reshape(B, C, -1, n_experts).mean(axis=(1, 2))
+                x_np = x.numpy()
+                for b in range(B):
+                    feature_rows.append(list(self._compute_sample_features(x_np[b])))
+                    dominant_experts.append(int(mean_probs[b].argmax()))
+
+        if len(feature_rows) < max(10, n_experts * 3):
+            print('Figure 6 skipped: insufficient test samples for regression.')
+            return
+
+        X = np.array(feature_rows,    dtype=np.float64)
+        y = np.array(dominant_experts, dtype=int)
+
+        if len(np.unique(y)) < 2:
+            print('Figure 6 skipped: only one dominant expert class observed.')
+            return
+
+        X_mu, X_sd = X.mean(axis=0), X.std(axis=0)
+        X_sd[X_sd < 1e-12] = 1.0
+        X_norm = (X - X_mu) / X_sd
+
+        coef_table = self._fit_mnlogit(X_norm, y, n_experts)
+
+        save_path = os.path.join(self.out_dir, 'logistic_regression_mapping.pdf')
+        plot_logistic_regression_table(
+            coef_table=coef_table,
+            expert_labels=self.expert_types,
+            feature_names=['Volatility (σ)', 'Trend (τ)', 'Seasonality (γ)'],
+            save_path=save_path,
+            title=(f'Multinomial Logistic Regression — {self.args.data}'
+                   f'  (pred_len={self.args.pred_len}, N={len(y)})'),
+        )
+        print(f'Saved: {save_path}')
+
+        # Save coefficient table in long (tidy) format
+        feat_full = ['Intercept', 'Volatility (σ)', 'Trend (τ)', 'Seasonality (γ)']
+        csv_coef  = os.path.join(self.out_dir, 'logistic_regression_coefficients.csv')
+        with open(csv_coef, 'w', newline='') as f:
+            w = csv.writer(f)
+            w.writerow(['expert', 'feature', 'coef', 'se', 'pval', 'significance'])
+            for entry in coef_table:
+                for feat, c, s, p in zip(feat_full,
+                                          entry['coef'], entry['se'], entry['pval']):
+                    if np.isnan(p):
+                        sig, p_str, s_str = 'N/A', 'N/A', 'N/A'
+                    else:
+                        sig   = ('***' if p < 0.001 else
+                                 '**'  if p < 0.01  else
+                                 '*'   if p < 0.05  else 'n.s.')
+                        p_str = f'{p:.8e}'
+                        s_str = f'{s:.8f}' if not np.isnan(s) else 'N/A'
+                    w.writerow([entry['expert'], feat, f'{c:.8f}', s_str, p_str, sig])
+        print(f'Saved: {csv_coef}')
+
+    # ------------------------------------------------------------------
+    # Figure 7 — Mutual Information & Entropy Disentanglement
+    # ------------------------------------------------------------------
+
+    def run_mi_entropy_analysis(self):
+        """
+        Figure 7 — Mutual Information and Entropy Disentanglement.
+
+        Computes:
+          • Per-sample routing entropy H(G_t) = −Σ G_k log₂ G_k
+          • MI matrix I(G_k; Z) for Z ∈ {volatility, trend, seasonality}
+        """
+        try:
+            from sklearn.feature_selection import mutual_info_regression
+        except ImportError:
+            print('Figure 7 skipped: scikit-learn is required.')
+            return
+
+        _, loader = data_provider(self.args, 'test')
+
+        routing_vecs, feature_rows = [], []
+        n_experts = len(self.expert_types)
+
+        self.model.eval()
+        with torch.no_grad():
+            for x, _ in loader:
+                x_dev = x.to(self.device)
+                _, _, routing_log = self.model(x_dev, return_routing=True)
+                if not routing_log:
+                    continue
+                logits = routing_log[-1]
+                probs  = F.softmax(logits, dim=-1).cpu().numpy()
+                B, C   = x.shape[0], x.shape[2]
+                mean_probs = probs.reshape(B, C, -1, n_experts).mean(axis=(1, 2))
+                routing_vecs.append(mean_probs)
+                x_np = x.numpy()
+                for b in range(B):
+                    feature_rows.append(list(self._compute_sample_features(x_np[b])))
+
+        if not routing_vecs:
+            print('Figure 7 skipped: no routing data collected.')
+            return
+
+        routing_vecs = np.concatenate(routing_vecs, axis=0)  # (N, n_experts)
+        features     = np.array(feature_rows, dtype=np.float64)   # (N, 3)
+
+        eps      = 1e-9
+        entropy  = -(routing_vecs * np.log2(np.clip(routing_vecs, eps, 1.0))).sum(axis=1)
+        max_ent  = np.log2(n_experts)
+
+        mi_matrix = np.zeros((n_experts, 3))
+        for k in range(n_experts):
+            mi_matrix[k] = mutual_info_regression(
+                features, routing_vecs[:, k], random_state=42, n_neighbors=5
+            )
+
+        save_path = os.path.join(self.out_dir, 'mi_entropy_analysis.pdf')
+        plot_mi_entropy_analysis(
+            entropy=entropy,
+            max_entropy=max_ent,
+            mi_matrix=mi_matrix,
+            expert_labels=self.expert_types,
+            feature_names=['Volatility (σ)', 'Trend (τ)', 'Seasonality (γ)'],
+            save_path=save_path,
+            title=(f'MI & Entropy Disentanglement — {self.args.data}'
+                   f'  (pred_len={self.args.pred_len})'),
+        )
+        print(f'Saved: {save_path}')
+        print(f'  Mean H(G_t) = {entropy.mean():.4f} bits  '
+              f'(max = {max_ent:.4f}, utilisation = {entropy.mean() / max_ent:.1%})')
+
+        feat_names = ['Volatility (σ)', 'Trend (τ)', 'Seasonality (γ)']
+
+        # Per-sample entropy
+        csv_ent = os.path.join(self.out_dir, 'routing_entropy_samples.csv')
+        with open(csv_ent, 'w', newline='') as f:
+            w = csv.writer(f)
+            w.writerow(['sample_idx', 'entropy_bits'])
+            for i, h in enumerate(entropy):
+                w.writerow([i, f'{h:.8f}'])
+        print(f'Saved: {csv_ent}')
+
+        # MI matrix
+        csv_mi = os.path.join(self.out_dir, 'mi_matrix.csv')
+        with open(csv_mi, 'w', newline='') as f:
+            w = csv.writer(f)
+            w.writerow(['expert'] + feat_names)
+            for k, et in enumerate(self.expert_types):
+                w.writerow([et] + [f'{v:.8f}' for v in mi_matrix[k]])
+        print(f'Saved: {csv_mi}')
+
+        # Summary stats
+        csv_sum = os.path.join(self.out_dir, 'mi_entropy_summary.csv')
+        with open(csv_sum, 'w', newline='') as f:
+            w = csv.writer(f)
+            w.writerow(['metric', 'value'])
+            w.writerow(['mean_entropy_bits',   f'{entropy.mean():.8f}'])
+            w.writerow(['std_entropy_bits',    f'{entropy.std():.8f}'])
+            w.writerow(['median_entropy_bits', f'{np.median(entropy):.8f}'])
+            w.writerow(['max_entropy_bits',    f'{max_ent:.8f}'])
+            w.writerow(['entropy_utilisation', f'{entropy.mean() / max_ent:.8f}'])
+            for k, et in enumerate(self.expert_types):
+                for j, fn in enumerate(['volatility', 'trend', 'seasonality']):
+                    w.writerow([f'MI_{et}_{fn}', f'{mi_matrix[k, j]:.8f}'])
+        print(f'Saved: {csv_sum}')
+
+    # ------------------------------------------------------------------
     # Entry point
     # ------------------------------------------------------------------
 
@@ -388,4 +767,10 @@ class ExpInterpretability:
         self.run_attention_snapshots()
         print('--- Figure 4: Best-Case Comparison vs. Single-Bias Models ---')
         self.run_best_case_comparison()
+        print('--- Figure 5: KL-Divergence Structural Break Detection ---')
+        self.run_kl_divergence_analysis()
+        print('--- Figure 6: Multinomial Logistic Regression Mapping ---')
+        self.run_logistic_regression_mapping()
+        print('--- Figure 7: Mutual Information & Entropy Disentanglement ---')
+        self.run_mi_entropy_analysis()
         print('Interpretability analysis complete.')

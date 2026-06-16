@@ -616,7 +616,7 @@ def plot_best_case_comparison(input_series, gt_series, bamoe_series, sb_series,
     ax.axvspan(seq_len,  seq_len + pred_len, alpha=0.05, color='#e74c3c', zorder=0)
 
     # Dividing line between input and forecast
-    ax.axvline(seq_len, color='#555555', lw=1.0, ls=':', alpha=0.7, zorder=3)
+    ax.axvline(seq_len, color='#555555', lw=2.0, ls=':', alpha=0.7, zorder=3)
 
     # Input
     ax.plot(t_in, input_series, color='#2c3e50', lw=1.3, label='Input', zorder=4)
@@ -662,6 +662,254 @@ def plot_best_case_comparison(input_series, gt_series, bamoe_series, sb_series,
               framealpha=0.88, edgecolor='#cccccc')
     ax.set_title(title, fontsize=11, pad=14)
 
+    plt.tight_layout()
+    os.makedirs(os.path.dirname(save_path) or '.', exist_ok=True)
+    fig.savefig(save_path, dpi=180, bbox_inches='tight')
+    plt.close(fig)
+
+
+# ---------------------------------------------------------------------------
+# Figure 5 — KL-Divergence Structural Break Detection
+# ---------------------------------------------------------------------------
+
+def plot_kl_divergence_analysis(series, cusum, kl_seq, kl_timesteps,
+                                 break_idx, r, p_val, save_path, title=''):
+    """
+    Three stacked panels (shared x-axis):
+      1. Raw time series with structural-break marker.
+      2. CUSUM statistic (level-shift detector).
+      3. D_KL(G_t || G_{t+1}) between consecutive routing vectors, annotated
+         with Pearson r against the CUSUM break score.
+    """
+    seq_len = len(series)
+    t = np.arange(seq_len)
+
+    fig, (ax_ts, ax_cs, ax_kl) = plt.subplots(
+        3, 1, figsize=(13, 8), sharex=True,
+        gridspec_kw={'height_ratios': [1.1, 0.9, 1.2], 'hspace': 0.06},
+    )
+
+    # Panel 1: raw signal
+    ax_ts.plot(t, series, color='#2c3e50', lw=1.2, zorder=3)
+    ax_ts.axvspan(0, break_idx,  alpha=0.06, color='#3498db', zorder=1)
+    ax_ts.axvspan(break_idx, seq_len, alpha=0.06, color='#e74c3c', zorder=1)
+    ax_ts.axvline(break_idx, color='#e74c3c', lw=1.8, ls='--', alpha=0.85,
+                   zorder=4, label='Structural break (CUSUM)')
+    ax_ts.set_ylabel('Signal (normalised)', fontsize=10)
+    ax_ts.legend(loc='upper right', fontsize=8.5)
+    ax_ts.set_title(title, fontsize=11, pad=7)
+    ax_ts.grid(True, lw=0.35, alpha=0.35)
+
+    # Panel 2: CUSUM
+    ax_cs.plot(t, cusum, color='#8e44ad', lw=1.3, alpha=0.90, zorder=3)
+    ax_cs.fill_between(t, 0, cusum, where=(cusum >= 0),
+                        alpha=0.20, color='#8e44ad', zorder=2)
+    ax_cs.fill_between(t, 0, cusum, where=(cusum < 0),
+                        alpha=0.20, color='#e74c3c', zorder=2)
+    ax_cs.axvline(break_idx, color='#e74c3c', lw=1.8, ls='--', alpha=0.85, zorder=4)
+    ax_cs.axhline(0, color='grey', lw=0.7, ls=':', zorder=1)
+    ax_cs.set_ylabel('CUSUM', fontsize=10)
+    ax_cs.grid(True, lw=0.35, alpha=0.35)
+
+    # Panel 3: KL divergence
+    ax_kl.fill_between(kl_timesteps, 0, kl_seq, color='#e67e22', alpha=0.55, zorder=2)
+    ax_kl.plot(kl_timesteps, kl_seq, color='#d35400', lw=1.3, zorder=3)
+    ax_kl.axvline(break_idx, color='#e74c3c', lw=1.8, ls='--', alpha=0.85, zorder=5)
+
+    peak_i = int(np.argmax(kl_seq))
+    ax_kl.scatter([kl_timesteps[peak_i]], [kl_seq[peak_i]],
+                   color='#c0392b', s=55, zorder=6)
+    side = -1 if kl_timesteps[peak_i] > seq_len * 0.6 else 1
+    ax_kl.annotate(
+        f'KL peak  t={int(kl_timesteps[peak_i])}',
+        xy=(kl_timesteps[peak_i], kl_seq[peak_i]),
+        xytext=(kl_timesteps[peak_i] + side * seq_len * 0.12,
+                kl_seq[peak_i] * 0.55),
+        arrowprops=dict(arrowstyle='->', color='#c0392b', lw=1.3),
+        fontsize=8.5, color='#c0392b',
+    )
+
+    p_str = f'{p_val:.2e}' if p_val < 0.001 else f'{p_val:.4f}'
+    ax_kl.text(0.985, 0.93,
+               f'Pearson r = {r:.3f}\np = {p_str}',
+               transform=ax_kl.transAxes, ha='right', va='top', fontsize=9.5,
+               bbox=dict(boxstyle='round,pad=0.35', fc='white',
+                         ec='#d35400', alpha=0.90))
+
+    ax_kl.set_ylabel(r'$D_{\mathrm{KL}}(G_t \,\|\, G_{t+1})$', fontsize=10)
+    ax_kl.set_xlabel('Timestep', fontsize=10)
+    ax_kl.set_xlim(0, seq_len - 1)
+    ax_kl.set_ylim(bottom=0)
+    ax_kl.grid(True, lw=0.35, alpha=0.35)
+
+    plt.tight_layout()
+    os.makedirs(os.path.dirname(save_path) or '.', exist_ok=True)
+    fig.savefig(save_path, dpi=180, bbox_inches='tight')
+    plt.close(fig)
+
+
+# ---------------------------------------------------------------------------
+# Figure 6 — Multinomial Logistic Regression Coefficient Table
+# ---------------------------------------------------------------------------
+
+def plot_logistic_regression_table(coef_table, expert_labels, feature_names,
+                                    save_path, title=''):
+    """
+    Horizontal bar chart — one subplot per expert — showing β coefficients
+    with 95% CI (±1.96 SE) and significance stars.
+
+    coef_table : list of dicts {expert, coef:[intercept,f1,...], se, pval}
+    """
+    n_panels   = len(coef_table)
+    col_labels = ['Intercept'] + feature_names
+
+    fig, axes = plt.subplots(1, n_panels, figsize=(3.8 * n_panels, 5.0),
+                              sharey=True)
+    if n_panels == 1:
+        axes = [axes]
+
+    for ax, entry in zip(axes, coef_table):
+        lbl    = entry['expert']
+        coefs  = np.array(entry['coef'],  dtype=float)
+        ses    = np.array(entry['se'],    dtype=float)
+        pvs    = np.array(entry['pval'],  dtype=float)
+
+        base_lbl = lbl.replace(' (base)', '').strip()
+        color    = _expert_color(base_lbl)
+        is_base  = '(base)' in lbl
+
+        x = np.arange(len(coefs))
+        ax.barh(x, coefs, color=color, alpha=0.45 if is_base else 0.80,
+                 height=0.55, zorder=3, edgecolor='white', linewidth=0.4)
+
+        if not np.all(np.isnan(ses)) and not is_base:
+            safe_se = np.where(np.isnan(ses), 0.0, ses)
+            ax.errorbar(coefs, x, xerr=1.96 * safe_se,
+                         fmt='none', color='#333333', capsize=3.5, lw=1.4, zorder=4)
+
+        ax.axvline(0, color='#555555', lw=0.9, ls='--', zorder=2, alpha=0.70)
+        ax.set_yticks(x)
+        ax.set_yticklabels(col_labels if ax is axes[0] else [], fontsize=9)
+        ax.set_xlabel('β (standardised)', fontsize=9)
+        ax.set_title(lbl, color=color, fontsize=9.5, fontweight='bold', pad=6)
+        ax.grid(axis='x', lw=0.35, alpha=0.40)
+        ax.tick_params(axis='y', labelsize=8.5)
+
+        # Significance stars
+        if not np.all(np.isnan(pvs)) and not is_base:
+            c_range = np.nanmax(np.abs(coefs))
+            offset  = c_range * 0.05 if c_range > 0 else 0.02
+            for i, (c, p) in enumerate(zip(coefs, pvs)):
+                if np.isnan(p):
+                    continue
+                stars = ('***' if p < 0.001 else
+                         '**'  if p < 0.01  else
+                         '*'   if p < 0.05  else '')
+                if stars:
+                    ax.text(c + (offset if c >= 0 else -offset), i,
+                             stars, va='center',
+                             ha='left' if c >= 0 else 'right',
+                             fontsize=9, color='#c0392b', fontweight='bold')
+
+    fig.text(0.5, -0.02,
+             '*p<0.05   **p<0.01   ***p<0.001   |   Error bars: ±1.96 SE   '
+             '|   Features standardised to μ=0, σ=1',
+             ha='center', va='top', fontsize=8, color='#555555')
+    fig.suptitle(title, fontsize=11, y=1.01)
+    plt.tight_layout()
+    os.makedirs(os.path.dirname(save_path) or '.', exist_ok=True)
+    fig.savefig(save_path, dpi=180, bbox_inches='tight')
+    plt.close(fig)
+
+
+# ---------------------------------------------------------------------------
+# Figure 7 — Mutual Information & Entropy Disentanglement
+# ---------------------------------------------------------------------------
+
+def plot_mi_entropy_analysis(entropy, max_entropy, mi_matrix, expert_labels,
+                              feature_names, save_path, title=''):
+    """
+    Two-panel figure:
+      Left  : Histogram of H(G_t) over the test set with mean and H_max lines.
+      Right : MI matrix heatmap (experts × data characteristics) — a diagonal-
+              dominant pattern is statistical proof of expert specialisation.
+    """
+    order, sorted_labels, spans = _sort_by_category(expert_labels)
+    sorted_mi = mi_matrix[order, :]
+    n_experts = len(sorted_labels)
+    n_feats   = len(feature_names)
+
+    fig = plt.figure(figsize=(14, 5.8))
+    gs  = GridSpec(1, 2, figure=fig, width_ratios=[1.0, 1.5], wspace=0.38)
+
+    # Left panel: entropy distribution
+    ax_ent = fig.add_subplot(gs[0, 0])
+    ax_ent.hist(entropy, bins=40, color='#2980b9', alpha=0.78,
+                 edgecolor='white', linewidth=0.5)
+    ax_ent.axvline(entropy.mean(), color='#e74c3c', lw=2.0, ls='--', zorder=4,
+                    label=f'Mean H = {entropy.mean():.3f} bits')
+    ax_ent.axvline(max_entropy, color='#27ae60', lw=1.8, ls=':', zorder=4,
+                    label=f'H_max = {max_entropy:.3f} (uniform)')
+    utilisation = entropy.mean() / max_entropy if max_entropy > 0 else 0.0
+    ax_ent.text(0.97, 0.97,
+                f'Entropy utilisation\n{utilisation:.1%} of H_max',
+                transform=ax_ent.transAxes, ha='right', va='top', fontsize=9,
+                bbox=dict(boxstyle='round,pad=0.35', fc='white',
+                          ec='#2980b9', alpha=0.88))
+    ax_ent.set_xlabel(r'$H(G_t)$  [bits]', fontsize=10)
+    ax_ent.set_ylabel('Count', fontsize=10)
+    ax_ent.set_title('Temporal Routing Entropy Distribution', fontsize=10)
+    ax_ent.legend(fontsize=8.5, loc='upper left', framealpha=0.88)
+    ax_ent.grid(True, lw=0.35, alpha=0.40)
+
+    # Right panel: MI matrix heatmap
+    ax_mi  = fig.add_subplot(gs[0, 1])
+    vmax   = sorted_mi.max() if sorted_mi.max() > 0 else 1.0
+    im     = ax_mi.imshow(sorted_mi, aspect='auto', cmap='YlOrRd',
+                           vmin=0, vmax=vmax)
+
+    for i in range(n_experts):
+        for j in range(n_feats):
+            val       = sorted_mi[i, j]
+            txt_color = 'white' if val > vmax * 0.62 else '#333333'
+            ax_mi.text(j, i, f'{val:.3f}',
+                        ha='center', va='center', fontsize=9.5,
+                        color=txt_color, fontweight='bold')
+
+    ax_mi.set_xticks(range(n_feats))
+    ax_mi.set_xticklabels(feature_names, fontsize=9.5)
+    ax_mi.set_yticks(range(n_experts))
+    ax_mi.set_yticklabels(sorted_labels, fontsize=9.5)
+
+    # Colour tick labels by category / feature type
+    plt.draw()
+    for tick, lbl in zip(ax_mi.get_yticklabels(), sorted_labels):
+        tick.set_color(_expert_color(lbl))
+    feat_colors = ['#2ca02c', '#1f77b4', '#ff7f0e']
+    for tick, fc in zip(ax_mi.get_xticklabels(), feat_colors):
+        tick.set_color(fc)
+
+    # White separators at category boundaries
+    prev_end = -1
+    for start, end, _cname, _color in spans:
+        if start > 0 and start != prev_end + 1:
+            ax_mi.axhline(start - 0.5, color='white', linewidth=2.5, zorder=5)
+        prev_end = end
+
+    # Category labels on the right margin
+    for start, end, cname, color in spans:
+        mid_i  = (start + end) / 2.0
+        y_frac = (n_experts - mid_i - 0.5) / n_experts
+        ax_mi.text(1.02, y_frac, cname,
+                    transform=ax_mi.transAxes, ha='left', va='center',
+                    color=color, fontsize=8.0, fontweight='bold', clip_on=False)
+
+    cbar = plt.colorbar(im, ax=ax_mi, shrink=0.82, pad=0.02)
+    cbar.set_label('Mutual Information (nats)', fontsize=9)
+    ax_mi.set_title(r'$I(G_k\,;\,\mathbf{Z})$ — Expert vs. Data Characteristics',
+                     fontsize=10)
+
+    fig.suptitle(title, fontsize=12, y=1.01)
     plt.tight_layout()
     os.makedirs(os.path.dirname(save_path) or '.', exist_ok=True)
     fig.savefig(save_path, dpi=180, bbox_inches='tight')

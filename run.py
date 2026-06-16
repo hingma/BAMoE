@@ -82,12 +82,12 @@ def _make_parser() -> argparse.ArgumentParser:
 
     # ---- SingleBias args (Experiment 1) ----
     p.add_argument('--bias_type', type=str, default='global',
-                   choices=['global', 'causal', 'local', 'periodic','periodic_fixed', 'reverse_causal', 'alibi', 'relative', 'trend', 'season4al'],
+                   choices=['global', 'causal', 'local', 'periodic'],
                    help='Inductive bias for SingleBiasTransformer.')
 
     # ---- BAMoE args (Experiments 2, 3) ----
     p.add_argument('--expert_types', type=str,
-                   default='local,global,periodic,periodic_fixed,causal,reverse_causal,trend,seasonal,alibi,relative',
+                   default='local,global,periodic,causal',
                    help='Comma-separated list of expert bias types.')
     p.add_argument('--top_k', type=int, default=2,
                    help='Number of active experts per token.')

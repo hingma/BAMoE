@@ -62,8 +62,9 @@ class BiasAwareMoE(nn.Module):
 
         Returns
         -------
-        out         : (B, N, D)
-        lb_loss     : scalar auxiliary load-balancing loss
+        out           : (B, N, D)
+        lb_loss       : scalar CV²-based load-balancing loss
+        ortho_loss    : scalar pairwise cosine-similarity orthogonality loss
         router_logits : (B, N, n_experts) or None
         """
         B, N, D = x.shape
@@ -104,7 +105,8 @@ class BiasAwareMoE(nn.Module):
             out = (weights.unsqueeze(-1) * selected).sum(dim=2)     # (B, N, D)
             lb_loss = self._balance_loss(logits)
 
-        return out, lb_loss, router_logits
+        ortho_loss = self._ortho_loss(expert_outs)
+        return out, lb_loss, ortho_loss, router_logits
 
     # ------------------------------------------------------------------
     def get_expert_attn_maps(self):
@@ -118,11 +120,19 @@ class BiasAwareMoE(nn.Module):
     # ------------------------------------------------------------------
     @staticmethod
     def _balance_loss(logits):
-        """Switch-Transformer auxiliary load-balancing loss."""
-        E = logits.shape[-1]
-        probs = F.softmax(logits, dim=-1)
-        # fraction of tokens dispatched to each expert (via hard argmax)
-        dispatch = F.one_hot(logits.argmax(dim=-1), num_classes=E).float()
-        f = dispatch.mean(dim=[0, 1])      # (E,)
-        p = probs.mean(dim=[0, 1])         # (E,)
-        return E * (f * p).sum()
+        """Continuous load-balancing loss: squared CV of per-expert routing load."""
+        probs = F.softmax(logits, dim=-1)      # (B, N, E)
+        p = probs.mean(dim=(0, 1))             # (E,) mean load per expert
+        mean_p = p.mean()                      # scalar ≈ 1/E
+        return p.var() / (mean_p.pow(2) + 1e-8)
+
+    @staticmethod
+    def _ortho_loss(expert_outs):
+        """Pairwise cosine-similarity penalty to push expert outputs into orthogonal subspaces."""
+        # expert_outs: (B, N, E, D) → treat each expert's output as a flat vector
+        B, N, E, D = expert_outs.shape
+        flat = expert_outs.permute(2, 0, 1, 3).reshape(E, -1)    # (E, B*N*D)
+        normed = F.normalize(flat, dim=-1)                         # (E, B*N*D)
+        gram = normed @ normed.T                                   # (E, E)
+        mask = ~torch.eye(E, dtype=torch.bool, device=expert_outs.device)
+        return gram.abs()[mask].sum()

@@ -23,14 +23,15 @@ class _TransformerLayer(nn.Module):
 
     def forward(self, x):
         if self.is_moe:
-            attn_out, lb_loss, router_logits = self.attn(self.norm1(x))
+            attn_out, lb_loss, ortho_loss, router_logits = self.attn(self.norm1(x))
         else:
             attn_out = self.attn(self.norm1(x))
             lb_loss = torch.tensor(0.0, device=x.device)
+            ortho_loss = torch.tensor(0.0, device=x.device)
             router_logits = None
         x = x + attn_out
         x = x + self.ffn(self.norm2(x))
-        return x, lb_loss, router_logits
+        return x, lb_loss, ortho_loss, router_logits
 
 
 class BAMoE(nn.Module):
@@ -59,6 +60,7 @@ class BAMoE(nn.Module):
         super().__init__()
         self.pred_len = args.pred_len
         self.load_balance_coef = getattr(args, 'load_balance_coef', 0.01)
+        self.ortho_coef = getattr(args, 'ortho_coef', 0.01)
 
         expert_types = [e.strip() for e in args.expert_types.split(',')]
 
@@ -109,11 +111,13 @@ class BAMoE(nn.Module):
         """
         tokens, B, C = self.patch_embed(x)   # (B*C, N, d_model)
         total_lb = torch.tensor(0.0, device=x.device)
+        total_ortho = torch.tensor(0.0, device=x.device)
         routing_log = []
 
         for layer in self.layers:
-            tokens, lb, router_logits = layer(tokens)
+            tokens, lb, ortho, router_logits = layer(tokens)
             total_lb = total_lb + lb
+            total_ortho = total_ortho + ortho
             if return_routing and router_logits is not None:
                 routing_log.append(router_logits.detach())
 
@@ -122,5 +126,5 @@ class BAMoE(nn.Module):
         pred = self.head(flat)                                  # (B*C, pred_len)
         pred = pred.view(B, C, self.pred_len).permute(0, 2, 1) # (B, pred_len, C)
 
-        aux_loss = self.load_balance_coef * total_lb
+        aux_loss = self.load_balance_coef * total_lb + self.ortho_coef * total_ortho
         return pred, aux_loss, routing_log if return_routing else None
